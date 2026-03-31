@@ -1,0 +1,114 @@
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import dotenv from 'dotenv'
+
+dotenv.config({ path: '.env.local' })
+dotenv.config({ path: '.env.functions' })
+
+const projectUrl = process.env.SUPABASE_URL
+const syncCronSecret = process.env.SYNC_CRON_SECRET
+
+if (!projectUrl) {
+  throw new Error('SUPABASE_URL is required in .env.local to schedule the market-close sync.')
+}
+
+if (!syncCronSecret) {
+  throw new Error('SYNC_CRON_SECRET is required in .env.functions to schedule the market-close sync.')
+}
+
+const functionUrl = `${projectUrl.replace(/\/+$/, '')}/functions/v1/sync-etoro-portfolio`
+
+function sqlString(value: string) {
+  return `'${value.replace(/'/g, "''")}'`
+}
+
+const scheduleConfigs = [
+  {
+    jobName: 'ohf-market-close-sync-2005-utc',
+    cron: '5 20 * * 1-5',
+    scheduleKey: 'us-market-close-2005-utc',
+  },
+  {
+    jobName: 'ohf-market-close-sync-2105-utc',
+    cron: '5 21 * * 1-5',
+    scheduleKey: 'us-market-close-2105-utc',
+  },
+] as const
+
+const unscheduleSql = `
+select cron.unschedule(jobid)
+from cron.job
+where jobname in (${scheduleConfigs.map((config) => sqlString(config.jobName)).join(', ')});
+`
+
+const scheduleSql = scheduleConfigs
+  .map(
+    (config) => `
+select cron.schedule(
+  ${sqlString(config.jobName)},
+  ${sqlString(config.cron)},
+  $schedule$
+    select net.http_post(
+      url := ${sqlString(functionUrl)},
+      headers := jsonb_build_object(
+        'Content-Type', 'application/json',
+        'x-sync-cron-secret', ${sqlString(syncCronSecret)}
+      ),
+      body := jsonb_build_object(
+        'trigger', 'scheduled_market_close',
+        'market', 'US',
+        'scheduleKey', ${sqlString(config.scheduleKey)}
+      ),
+      timeout_milliseconds := 15000
+    ) as request_id;
+  $schedule$
+);
+`
+  )
+  .join('\n')
+
+const sql = `
+create extension if not exists pg_net;
+create extension if not exists pg_cron;
+
+${unscheduleSql}
+${scheduleSql}
+
+select jobid, jobname, schedule
+from cron.job
+where jobname like 'ohf-market-close-sync-%'
+order by jobname;
+`
+
+const tempDirectory = mkdtempSync(join(tmpdir(), 'ohf-market-close-sync-'))
+const sqlFilePath = join(tempDirectory, 'schedule-market-close-sync.sql')
+writeFileSync(sqlFilePath, sql, 'utf8')
+
+try {
+  const result =
+    process.platform === 'win32'
+      ? execFileSync(
+          'cmd.exe',
+          ['/c', 'npx', 'supabase', 'db', 'query', '--linked', '--output', 'table', '--file', sqlFilePath],
+          {
+            cwd: process.cwd(),
+            stdio: 'pipe',
+            encoding: 'utf8',
+          }
+        )
+      : execFileSync(
+          'npx',
+          ['supabase', 'db', 'query', '--linked', '--output', 'table', '--file', sqlFilePath],
+          {
+            cwd: process.cwd(),
+            stdio: 'pipe',
+            encoding: 'utf8',
+          }
+        )
+
+  process.stdout.write(result)
+} finally {
+  rmSync(tempDirectory, { recursive: true, force: true })
+}

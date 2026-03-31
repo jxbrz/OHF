@@ -1,73 +1,173 @@
-# React + TypeScript + Vite
+# OHF Dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Private full-stack investment-club dashboard for a pooled eToro account. The app replaces the workbook model with a React + Supabase stack, deterministic unit-based accounting, secure backend-only eToro syncs, and historical portfolio snapshots.
 
-Currently, two official plugins are available:
+## Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Frontend: React, TypeScript, Vite, Tailwind CSS, shadcn/ui, Recharts, React Router, TanStack Query
+- Backend/platform: Supabase Postgres, Auth, RLS, Edge Functions
+- Shared logic: pure TypeScript calculation engine in [`shared/calculations/index.ts`](/c:/Users/Stanl/OHF/shared/calculations/index.ts)
 
-## React Compiler
+## What's implemented
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- Private email/password login flow with authenticated routes and admin/viewer roles
+- SQL schema + RLS for profiles, members, transactions, snapshots, holdings, settings, and audit logs
+- Unit-based fund accounting with test coverage for units, ownership, pricing, member invested/returned capital, and transfer-aware returns
+- Admin/member/transaction UI, sortable tables, charts, toasts, dialogs, and finance-style dark theme
+- Secure `sync-etoro-portfolio` Edge Function with mock fallback and audit logging
+- Sync-time FX conversion so broker totals can stay in USD while the stored fund ledger remains in GBP
+- Workbook import script for `OHF.xlsx`, including zero-unit summary-only members
+- Private member-to-member unit transfer flow that records paired `TRANSFER_OUT` and `TRANSFER_IN` ledger rows
 
-## Expanding the ESLint configuration
+## Hosted Supabase setup
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+This is now the recommended path. Docker is optional.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+1. Create a Supabase project in the Supabase dashboard.
+2. Log into the CLI:
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```powershell
+npx supabase login
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+3. Link this workspace to your hosted project:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```powershell
+npx supabase link --project-ref <YOUR_PROJECT_REF>
 ```
+
+4. Copy [.env.example](/c:/Users/Stanl/OHF/.env.example) to `.env.local` and fill:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+5. Push the schema, policies, and seed settings to the hosted database:
+
+```powershell
+npm run supabase:push
+```
+
+6. Copy [.env.functions.example](/c:/Users/Stanl/OHF/.env.functions.example) to `.env.functions` and fill your eToro secrets.
+
+7. Push Edge Function secrets to the hosted project:
+
+```powershell
+npx supabase secrets set --env-file .env.functions
+```
+
+8. Deploy the sync function:
+
+```powershell
+npm run supabase:deploy
+```
+
+9. Seed the first admin user:
+
+```powershell
+npm run seed:admin
+```
+
+10. Import the workbook into the hosted database:
+
+```powershell
+npm run import:workbook -- --replace
+```
+
+11. Start the frontend:
+
+```powershell
+npm run dev
+```
+
+## Optional local Supabase with Docker
+
+Use this only if you want the full backend running on your own machine.
+
+```powershell
+npm run supabase:start
+npm run supabase:reset
+npm run supabase:functions
+```
+
+For local mode, replace the `.env.local` values with the ones shown by:
+
+```powershell
+npx supabase status -o env
+```
+
+## Hosted workflow commands
+
+```powershell
+npm run supabase:push
+npm run supabase:deploy
+npm run supabase:schedule:market-close
+npm run supabase:types:linked
+npm run seed:admin
+npm run import:workbook -- --replace
+```
+
+## Local workflow commands
+
+```powershell
+npm run supabase:start
+npm run supabase:reset
+npm run supabase:functions
+npm run supabase:types
+```
+
+## App commands
+
+```powershell
+npm run dev
+npm run build
+npm run lint
+npm run test
+```
+
+## eToro sync behavior
+
+- The browser never receives eToro credentials.
+- The Edge Function reads `ETORO_API_KEY`, `ETORO_USER_KEY`, `ETORO_BASE_URL`, `ETORO_USE_MOCK`, and `SYNC_CRON_SECRET`.
+- Live validation now checks `GET /api/v1/me` before using the real-account portfolio endpoint, and the sync reads the official `GET /api/v1/trading/info/real/pnl` payload for positions, credit, and PnL.
+- Broker quote fields such as `openRate` and `closeRate` stay in USD for holdings display, while account summaries, holding market values, P&L, and unit price are converted into the configured fund currency during sync.
+- If no manual broker-to-fund FX override is configured, the sync fetches the latest official ECB reference rates and stores the applied FX metadata inside each snapshot.
+- If live credentials are missing, or mock mode is enabled, the sync falls back to deterministic mock data.
+- Admins can trigger the sync from the `/admin` page. Each sync stores one `portfolio_snapshots` row plus its `holding_snapshots`.
+- `npm run supabase:schedule:market-close` creates two weekday cron jobs at `20:05 UTC` and `21:05 UTC`. The Edge Function deduplicates by New York market date so you get one post-close snapshot per US trading day across daylight-saving changes.
+
+## Workbook import behavior
+
+The importer reads `Members Summary` and `Transaction Log` from `OHF.xlsx` and:
+
+- inserts every transaction row as the ledger source of truth
+- upserts all member names found in either sheet
+- preserves summary-only zero-unit names like `MCGLYN` as active members
+- creates opening-balance ledger rows when the summary sheet shows non-zero units but the transaction log has no matching history
+- stores the workbook starting unit price in `app_settings.starting_unit_price`
+
+## Project structure
+
+```text
+src/
+  app/
+  components/
+  features/
+  lib/
+  pages/
+  types/
+shared/
+  calculations/
+scripts/
+supabase/
+  functions/
+  migrations/
+```
+
+## Notes
+
+- The committed [`src/types/database.ts`](/c:/Users/Stanl/OHF/src/types/database.ts) is a checked-in snapshot. For a hosted project, regenerate it with `npm run supabase:types:linked` after linking the CLI.
+- Member return reporting now separates `total invested`, `total returned`, `net invested`, `current value`, and `total return`, while still preserving the immutable raw ledger rows underneath.
+- Member-to-member unit sales should be recorded through the dedicated transfer flow rather than creating `TRANSFER_IN` / `TRANSFER_OUT` rows manually.
+- `FEE` is included in schema/type support for forward compatibility, but V1 still treats the app as a read-only broker integration plus manual internal accounting dashboard.
