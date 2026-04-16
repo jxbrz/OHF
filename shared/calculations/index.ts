@@ -177,6 +177,21 @@ export interface DashboardSummary {
   memberCount: number
 }
 
+export interface EffectiveValuation {
+  effectiveTotalAccountValue: number
+  effectiveCurrentUnitPrice: number
+  totalUnits: number
+  lastSyncedAccountValue: number | null
+  baseSnapshotCapturedAt: string | null
+  postSnapshotExternalCashFlow: number
+}
+
+export interface SuggestedUnitPrice {
+  unitPrice: number
+  source: 'snapshot' | 'starting_unit_price'
+  snapshotCapturedAt: string | null
+}
+
 export interface SnapshotChartPoint {
   capturedAt: string
   totalAccountValue: number
@@ -216,6 +231,7 @@ export interface DashboardComputationInput {
   latestHoldings: HoldingSnapshotLike[]
   startingUnitPrice?: NumericLike
   performanceBaselineAt?: string | null
+  effectiveValuation?: EffectiveValuation
 }
 
 export const DEFAULT_STARTING_UNIT_PRICE = 1
@@ -296,6 +312,28 @@ export function resolveSnapshotAsOf<T extends PortfolioSnapshotLike>(
   }
 
   return sortedSnapshots.find((snapshot) => new Date(snapshot.captured_at).getTime() <= cutoff) ?? null
+}
+
+export function resolveSuggestedUnitPriceAtDate(args: {
+  snapshots: PortfolioSnapshotLike[]
+  transactionDate?: string | null
+  startingUnitPrice?: NumericLike
+}): SuggestedUnitPrice {
+  const snapshot = resolveSnapshotAsOf(args.snapshots, args.transactionDate)
+
+  if (!snapshot) {
+    return {
+      unitPrice: getStartingUnitPrice(args.startingUnitPrice),
+      source: 'starting_unit_price',
+      snapshotCapturedAt: null,
+    }
+  }
+
+  return {
+    unitPrice: round(toNumber(snapshot.unit_price, getStartingUnitPrice(args.startingUnitPrice)), 8),
+    source: 'snapshot',
+    snapshotCapturedAt: snapshot.captured_at,
+  }
 }
 
 export function getSignedUnits(transaction: FundTransactionLike): number {
@@ -444,6 +482,51 @@ export function calculateOwnershipPercentage(netUnits: NumericLike, totalUnits: 
 
 export function calculateMemberCurrentValue(netUnits: NumericLike, currentUnitPrice: NumericLike): number {
   return round(toNumber(netUnits) * toNumber(currentUnitPrice), 6)
+}
+
+export function resolveEffectiveValuation(args: {
+  transactions: FundTransactionLike[]
+  latestSnapshot: PortfolioSnapshotLike | null
+  startingUnitPrice?: NumericLike
+}): EffectiveValuation {
+  const { transactions, latestSnapshot, startingUnitPrice } = args
+  const totalUnits = calculateTotalUnitsOutstanding(transactions)
+  const baseSnapshotCapturedAt = latestSnapshot?.captured_at ?? null
+  const lastSyncedAccountValue = latestSnapshot
+    ? round(toNumber(latestSnapshot.total_account_value), 6)
+    : null
+  const baseAccountValue = lastSyncedAccountValue ?? 0
+  const baseSnapshotTimestamp = baseSnapshotCapturedAt
+    ? new Date(baseSnapshotCapturedAt).getTime()
+    : null
+  const postSnapshotExternalCashFlow = round(
+    sortTransactionsByDate(transactions).reduce((total, transaction) => {
+      if (
+        baseSnapshotTimestamp !== null &&
+        Number.isFinite(baseSnapshotTimestamp) &&
+        new Date(transaction.date).getTime() <= baseSnapshotTimestamp
+      ) {
+        return total
+      }
+
+      return total + getSignedCashFlow(transaction)
+    }, 0),
+    6
+  )
+  const effectiveTotalAccountValue = round(baseAccountValue + postSnapshotExternalCashFlow, 6)
+
+  return {
+    effectiveTotalAccountValue,
+    effectiveCurrentUnitPrice: calculateCurrentUnitPrice(
+      effectiveTotalAccountValue,
+      totalUnits,
+      startingUnitPrice
+    ),
+    totalUnits,
+    lastSyncedAccountValue,
+    baseSnapshotCapturedAt,
+    postSnapshotExternalCashFlow,
+  }
 }
 
 function isOpeningLotTransaction(transaction: FundTransactionLike) {
@@ -975,12 +1058,18 @@ export function computeDashboardSummary({
   latestHoldings,
   startingUnitPrice,
   performanceBaselineAt,
+  effectiveValuation,
 }: DashboardComputationInput): DashboardSummary {
-  const totalUnits = calculateTotalUnitsOutstanding(transactions)
-  const totalAccountValue = latestSnapshot ? toNumber(latestSnapshot.total_account_value) : 0
-  const currentUnitPrice = latestSnapshot
-    ? calculateCurrentUnitPrice(totalAccountValue, totalUnits, startingUnitPrice)
-    : getStartingUnitPrice(startingUnitPrice)
+  const resolvedEffectiveValuation =
+    effectiveValuation ??
+    resolveEffectiveValuation({
+      transactions,
+      latestSnapshot,
+      startingUnitPrice,
+    })
+  const totalUnits = resolvedEffectiveValuation.totalUnits
+  const totalAccountValue = resolvedEffectiveValuation.effectiveTotalAccountValue
+  const currentUnitPrice = resolvedEffectiveValuation.effectiveCurrentUnitPrice
   const resolvedStartingUnitPrice = getStartingUnitPrice(startingUnitPrice)
   const performanceBaselineSnapshot = resolvePerformanceBaselineSnapshot({
     snapshots: snapshots ?? (latestSnapshot ? [latestSnapshot] : []),

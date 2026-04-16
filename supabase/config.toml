@@ -368,6 +368,9 @@ deno_version = 2
 [functions.sync-etoro-portfolio]
 verify_jwt = false
 
+[functions.generate-daily-review]
+verify_jwt = false
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

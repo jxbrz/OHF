@@ -9,7 +9,9 @@ import {
   computeDashboardSummary,
   filterTransactionsAsOf,
   resolvePerformanceBaselineSnapshot,
+  resolveEffectiveValuation,
   resolveSnapshotAsOf,
+  resolveSuggestedUnitPriceAtDate,
   type FundTransactionLike,
   type MemberLike,
   type PortfolioSnapshotLike,
@@ -283,6 +285,185 @@ describe('shared calculations', () => {
     expect(summary.performanceBaselineUnitPrice).toBe(1)
     expect(summary.performanceBaselineCapturedAt).toBe('2025-12-01T00:00:00.000Z')
     expect(summary.overallPerformancePct).toBeCloseTo(0.384615, 6)
+  })
+
+  it('keeps unit price unchanged when a deposit after the latest snapshot is entered at the current price', () => {
+    const postSnapshotTransactions: FundTransactionLike[] = [
+      {
+        id: 'seed-deposit',
+        member_id: 'a',
+        type: 'DEPOSIT',
+        amount: 200,
+        unit_price_at_time: 2,
+        units_amount: 100,
+        date: '2025-11-01T00:00:00.000Z',
+      },
+      {
+        id: 'new-deposit',
+        member_id: 'b',
+        type: 'DEPOSIT',
+        amount: 40,
+        unit_price_at_time: 2,
+        units_amount: 20,
+        date: '2025-12-11T00:00:00.000Z',
+      },
+    ]
+
+    const effectiveValuation = resolveEffectiveValuation({
+      transactions: postSnapshotTransactions,
+      latestSnapshot: {
+        ...latestSnapshot,
+        total_account_value: 200,
+        total_units: 100,
+        unit_price: 2,
+      },
+      startingUnitPrice: 1,
+    })
+
+    expect(effectiveValuation.effectiveTotalAccountValue).toBe(240)
+    expect(effectiveValuation.totalUnits).toBe(120)
+    expect(effectiveValuation.effectiveCurrentUnitPrice).toBe(2)
+  })
+
+  it('keeps unit price unchanged when a withdrawal after the latest snapshot is entered at the current price', () => {
+    const postSnapshotTransactions: FundTransactionLike[] = [
+      {
+        id: 'seed-deposit',
+        member_id: 'a',
+        type: 'DEPOSIT',
+        amount: 200,
+        unit_price_at_time: 2,
+        units_amount: 100,
+        date: '2025-11-01T00:00:00.000Z',
+      },
+      {
+        id: 'new-withdrawal',
+        member_id: 'a',
+        type: 'WITHDRAWAL',
+        amount: 20,
+        unit_price_at_time: 2,
+        units_amount: 10,
+        date: '2025-12-11T00:00:00.000Z',
+      },
+    ]
+
+    const effectiveValuation = resolveEffectiveValuation({
+      transactions: postSnapshotTransactions,
+      latestSnapshot: {
+        ...latestSnapshot,
+        total_account_value: 200,
+        total_units: 100,
+        unit_price: 2,
+      },
+      startingUnitPrice: 1,
+    })
+
+    expect(effectiveValuation.effectiveTotalAccountValue).toBe(180)
+    expect(effectiveValuation.totalUnits).toBe(90)
+    expect(effectiveValuation.effectiveCurrentUnitPrice).toBe(2)
+  })
+
+  it('does not change effective NAV or unit price for member-to-member transfers after the latest snapshot', () => {
+    const postSnapshotTransactions: FundTransactionLike[] = [
+      {
+        id: 'alpha-deposit',
+        member_id: 'a',
+        type: 'DEPOSIT',
+        amount: 100,
+        unit_price_at_time: 2,
+        units_amount: 50,
+        date: '2025-11-01T00:00:00.000Z',
+      },
+      {
+        id: 'bravo-deposit',
+        member_id: 'b',
+        type: 'DEPOSIT',
+        amount: 100,
+        unit_price_at_time: 2,
+        units_amount: 50,
+        date: '2025-11-01T00:00:00.000Z',
+      },
+      {
+        id: 'transfer-out',
+        member_id: 'a',
+        counterparty_member_id: 'b',
+        transfer_group_id: 'transfer-after-snapshot',
+        type: 'TRANSFER_OUT',
+        amount: 30,
+        unit_price_at_time: 2,
+        units_amount: 15,
+        date: '2025-12-11T00:00:00.000Z',
+      },
+      {
+        id: 'transfer-in',
+        member_id: 'b',
+        counterparty_member_id: 'a',
+        transfer_group_id: 'transfer-after-snapshot',
+        type: 'TRANSFER_IN',
+        amount: 30,
+        unit_price_at_time: 2,
+        units_amount: 15,
+        date: '2025-12-11T00:00:00.000Z',
+      },
+    ]
+
+    const effectiveValuation = resolveEffectiveValuation({
+      transactions: postSnapshotTransactions,
+      latestSnapshot: {
+        ...latestSnapshot,
+        total_account_value: 200,
+        total_units: 100,
+        unit_price: 2,
+      },
+      startingUnitPrice: 1,
+    })
+
+    expect(effectiveValuation.effectiveTotalAccountValue).toBe(200)
+    expect(effectiveValuation.totalUnits).toBe(100)
+    expect(effectiveValuation.effectiveCurrentUnitPrice).toBe(2)
+  })
+
+  it('falls back to the starting unit price when no snapshot exists', () => {
+    const effectiveValuation = resolveEffectiveValuation({
+      transactions: [],
+      latestSnapshot: null,
+      startingUnitPrice: 1.25,
+    })
+
+    expect(effectiveValuation.effectiveTotalAccountValue).toBe(0)
+    expect(effectiveValuation.totalUnits).toBe(0)
+    expect(effectiveValuation.effectiveCurrentUnitPrice).toBe(1.25)
+  })
+
+  it('suggests the latest snapshot price on or before the chosen transaction date', () => {
+    const suggestedPrice = resolveSuggestedUnitPriceAtDate({
+      snapshots: [
+        baselineSnapshot,
+        latestSnapshot,
+      ],
+      transactionDate: '2025-12-09T12:00:00.000Z',
+      startingUnitPrice: 1,
+    })
+
+    expect(suggestedPrice).toMatchObject({
+      unitPrice: 1,
+      source: 'snapshot',
+      snapshotCapturedAt: '2025-12-01T00:00:00.000Z',
+    })
+  })
+
+  it('falls back to the starting unit price when no prior snapshot exists for the chosen transaction date', () => {
+    const suggestedPrice = resolveSuggestedUnitPriceAtDate({
+      snapshots: [latestSnapshot],
+      transactionDate: '2025-11-01T12:00:00.000Z',
+      startingUnitPrice: 1,
+    })
+
+    expect(suggestedPrice).toMatchObject({
+      unitPrice: 1,
+      source: 'starting_unit_price',
+      snapshotCapturedAt: null,
+    })
   })
 
   it('resolves the performance baseline from the first snapshot on or after a configured date', () => {

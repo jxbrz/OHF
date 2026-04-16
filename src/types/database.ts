@@ -1,4 +1,4 @@
-﻿export type Json =
+export type Json =
   | string
   | number
   | boolean
@@ -91,6 +91,60 @@ export type Database = {
             columns: ["actor_profile_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      daily_reviews: {
+        Row: {
+          body: string
+          created_by: string | null
+          generated_at: string
+          id: string
+          model: string | null
+          raw_json: Json | null
+          review_date: string
+          snapshot_id: string | null
+          summary: string
+          title: string
+        }
+        Insert: {
+          body: string
+          created_by?: string | null
+          generated_at?: string
+          id?: string
+          model?: string | null
+          raw_json?: Json | null
+          review_date: string
+          snapshot_id?: string | null
+          summary: string
+          title: string
+        }
+        Update: {
+          body?: string
+          created_by?: string | null
+          generated_at?: string
+          id?: string
+          model?: string | null
+          raw_json?: Json | null
+          review_date?: string
+          snapshot_id?: string | null
+          summary?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_reviews_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "daily_reviews_snapshot_id_fkey"
+            columns: ["snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "portfolio_snapshots"
             referencedColumns: ["id"]
           },
         ]
@@ -476,4 +530,3 @@ export const Constants = {
     Enums: {},
   },
 } as const
-

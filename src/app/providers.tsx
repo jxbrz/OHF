@@ -4,12 +4,20 @@ import { ThemeProvider } from 'next-themes'
 import { Toaster } from '@/components/ui/sonner'
 import { AuthProvider } from '@/features/auth/auth-provider'
 
+function getMsUntilNextHour() {
+  const now = new Date()
+  const nextHour = new Date(now)
+  nextHour.setMinutes(0, 0, 0)
+  nextHour.setHours(nextHour.getHours() + 1)
+  return Math.max(nextHour.getTime() - now.getTime(), 1_000)
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 30_000,
       refetchOnWindowFocus: false,
-      refetchInterval: 60 * 60 * 1000,
+      refetchInterval: () => getMsUntilNextHour(),
       refetchIntervalInBackground: true,
     },
   },

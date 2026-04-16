@@ -15,13 +15,36 @@ import {
   SheetTrigger,
 } from '@/components/ui/sheet'
 
+function BrandMark({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className="flex items-center gap-3">
+      <div
+        className={cn(
+          'flex items-center justify-center rounded-md border border-white/10 bg-[#8f1d2c] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_10px_18px_rgba(90,14,28,0.22)]',
+          compact ? 'h-9 w-9 text-[0.8rem]' : 'h-11 w-11 text-sm'
+        )}
+      >
+        <span className="font-black tracking-[0.14em]">OHF</span>
+      </div>
+      <div className="space-y-0.5">
+        {!compact ? (
+          <div className="text-[0.68rem] uppercase tracking-[0.18em] text-muted-foreground">Orchard</div>
+        ) : null}
+        <div className={cn('font-semibold tracking-tight text-foreground', compact ? 'text-sm' : 'text-xl')}>
+          Orchard Hedge Fund
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function NavContent({ onNavigate }: { onNavigate?: () => void }) {
   const { role } = useAuth()
   const location = useLocation()
   const visibleItems =
     role === 'admin'
       ? NAV_ITEMS
-      : NAV_ITEMS.filter((item) => item.to !== '/admin' && item.to !== '/reconciliation')
+      : NAV_ITEMS.filter((item) => item.to !== '/admin')
 
   return (
     <nav className="flex flex-col gap-1">
@@ -65,9 +88,8 @@ export function AppShell() {
     <div className="min-h-screen bg-background">
       <div className="mx-auto flex min-h-screen max-w-[1600px]">
         <aside className="hidden w-72 flex-col border-r border-border/70 bg-panel/90 px-5 py-6 shadow-[16px_0_36px_rgba(5,10,22,0.16)] backdrop-blur lg:flex">
-          <div className="space-y-1 border-b border-border/70 pb-6">
-            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">OHF</div>
-            <div className="text-xl font-semibold tracking-tight text-foreground">Orchard Hedge Fund</div>
+          <div className="border-b border-border/70 pb-6">
+            <BrandMark />
           </div>
           <div className="flex-1 py-6">
             <NavContent />
@@ -95,9 +117,11 @@ export function AppShell() {
                       <Menu className="size-4" />
                     </Button>
                   </SheetTrigger>
-                  <SheetContent side="left" className="w-80 bg-panel/95">
+                  <SheetContent side="left" size="sidebar" className="bg-panel/95">
                     <SheetHeader>
-                      <SheetTitle>OHF</SheetTitle>
+                      <SheetTitle className="text-left">
+                        <BrandMark compact />
+                      </SheetTitle>
                       <SheetDescription>Navigate the workspace.</SheetDescription>
                     </SheetHeader>
                     <div className="mt-6">
@@ -105,9 +129,7 @@ export function AppShell() {
                     </div>
                   </SheetContent>
                 </Sheet>
-                <div>
-                  <div className="text-sm font-semibold tracking-tight text-foreground">Orchard Hedge Fund</div>
-                </div>
+                <BrandMark compact />
               </div>
               <div className="flex items-center gap-3">
                 <Button className="lg:hidden" size="sm" variant="ghost" onClick={() => void signOut()}>

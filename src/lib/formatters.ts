@@ -34,6 +34,15 @@ export function formatCurrency(value: number, currency: 'GBP' | 'USD' = 'GBP') {
   }).format(value || 0)
 }
 
+export function formatUnitPrice(value: number, currency: 'GBP' | 'USD' = 'GBP') {
+  return new Intl.NumberFormat(resolveLocale(currency), {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  }).format(value || 0)
+}
+
 export function formatCompactCurrency(value: number, currency: 'GBP' | 'USD' = 'GBP') {
   return new Intl.NumberFormat(resolveLocale(currency), {
     style: 'currency',
@@ -67,6 +76,19 @@ export function formatPercent(value: number) {
 
 export function formatSignedCurrency(value: number, currency: 'GBP' | 'USD' = 'GBP') {
   const formatted = formatCurrency(Math.abs(value), currency)
+  if (value > 0) {
+    return `+${formatted}`
+  }
+
+  if (value < 0) {
+    return `-${formatted}`
+  }
+
+  return formatted
+}
+
+export function formatSignedUnitPrice(value: number, currency: 'GBP' | 'USD' = 'GBP') {
+  const formatted = formatUnitPrice(Math.abs(value), currency)
   if (value > 0) {
     return `+${formatted}`
   }

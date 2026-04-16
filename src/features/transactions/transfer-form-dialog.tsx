@@ -45,6 +45,7 @@ const transferSchema = z
 
 type TransferFormValues = z.input<typeof transferSchema>
 type TransferSubmitValues = z.output<typeof transferSchema>
+export type TransferDraftValues = Partial<TransferFormValues>
 
 interface TransferFormDialogProps {
   members: Tables<'members'>[]
@@ -54,7 +55,7 @@ interface TransferFormDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   transfer?: UnitTransferRecord | null
-  draftTransfer?: Partial<TransferFormValues> | null
+  draftTransfer?: TransferDraftValues | null
 }
 
 export function TransferFormDialog({

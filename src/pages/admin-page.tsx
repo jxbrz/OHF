@@ -7,6 +7,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { Field } from '@/components/shared/field'
 import { PageHeader } from '@/components/shared/page-header'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,11 +35,13 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { MemberFormDialog } from '@/features/admin/member-form-dialog'
+import { UserFormDialog } from '@/features/admin/user-form-dialog'
 import {
   createManualPortfolioSnapshot,
   deleteMember,
   fetchClubData,
   fetchAdminData,
+  fetchManagedUsers,
   readOptionalSettingNumber,
   readOptionalSettingString,
   readSettingBoolean,
@@ -47,6 +50,7 @@ import {
   triggerPortfolioSync,
   updateAppSetting,
   updateMember,
+  updateProfile,
 } from '@/lib/api'
 import { formatCurrency, formatDateTime, formatNumber, toDateTimeLocalValue } from '@/lib/formatters'
 import type { Tables } from '@/types/database'
@@ -65,11 +69,16 @@ export function AdminPage() {
   const [manualSnapshotRealizedPnl, setManualSnapshotRealizedPnl] = useState('')
   const [manualSnapshotCapturedAt, setManualSnapshotCapturedAt] = useState('')
   const [memberDialogOpen, setMemberDialogOpen] = useState(false)
+  const [userDialogOpen, setUserDialogOpen] = useState(false)
   const [editingMember, setEditingMember] = useState<Tables<'members'> | null>(null)
   const [deletingMember, setDeletingMember] = useState<Tables<'members'> | null>(null)
   const adminQuery = useQuery({
     queryKey: ['admin-data'],
     queryFn: fetchAdminData,
+  })
+  const managedUsersQuery = useQuery({
+    queryKey: ['managed-users'],
+    queryFn: fetchManagedUsers,
   })
   const clubQuery = useQuery({
     queryKey: ['club-data'],
@@ -185,6 +194,19 @@ export function AdminPage() {
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : 'Unable to delete member.')
+    },
+  })
+
+  const updateProfileMutation = useMutation({
+    mutationFn: ({ id, role }: { id: string; role: 'admin' | 'viewer' }) =>
+      updateProfile(id, { role }),
+    onSuccess: () => {
+      toast.success('User role updated.')
+      void queryClient.invalidateQueries({ queryKey: ['managed-users'] })
+      void queryClient.invalidateQueries({ queryKey: ['admin-data'] })
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : 'Unable to update user role.')
     },
   })
 
@@ -348,7 +370,7 @@ export function AdminPage() {
               <div className="mb-5 space-y-1">
                 <h2 className="text-lg font-semibold">Sync status</h2>
                 <p className="text-sm text-muted-foreground">
-                  Run a secure manual sync at any time. The backend also captures an automatic snapshot every hour so the overview stays fresh without exposing broker secrets.
+                  Run a secure manual sync at any time. The backend also captures an automatic snapshot on the hour so the overview stays fresh without exposing broker secrets.
                 </p>
               </div>
               <div className="grid gap-4 md:grid-cols-4">
@@ -475,6 +497,75 @@ export function AdminPage() {
           <div className="panel-surface overflow-hidden">
             <div className="flex items-center justify-between border-b border-border/70 px-4 py-4">
               <div>
+                <h2 className="text-lg font-semibold">Access</h2>
+                <p className="text-sm text-muted-foreground">
+                  Create club users and manage who has admin access without leaving the app.
+                </p>
+              </div>
+              <Button onClick={() => setUserDialogOpen(true)}>
+                <Plus className="size-4" />
+                Create user
+              </Button>
+            </div>
+            {managedUsersQuery.isError ? (
+              <div className="px-4 py-6 text-sm text-loss">
+                {managedUsersQuery.error instanceof Error
+                  ? managedUsersQuery.error.message
+                  : 'Unable to load users.'}
+              </div>
+            ) : managedUsersQuery.isLoading ? (
+              <div className="px-4 py-6 text-sm text-muted-foreground">Loading users...</div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>User</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead>Created</TableHead>
+                    <TableHead>Last sign-in</TableHead>
+                    <TableHead />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(managedUsersQuery.data ?? []).map((user) => (
+                    <TableRow key={user.id}>
+                      <TableCell>
+                        <div className="font-medium text-foreground">{user.username ?? 'Unnamed user'}</div>
+                        <div className="text-xs text-muted-foreground">{user.email ?? 'No email'}</div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={user.role === 'admin' ? 'default' : 'secondary'} className="capitalize">
+                          {user.role}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{user.createdAt ? formatDateTime(user.createdAt) : 'Unknown'}</TableCell>
+                      <TableCell>{user.lastSignInAt ? formatDateTime(user.lastSignInAt) : 'Never'}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={updateProfileMutation.isPending}
+                            onClick={() =>
+                              updateProfileMutation.mutate({
+                                id: user.id,
+                                role: user.role === 'admin' ? 'viewer' : 'admin',
+                              })
+                            }
+                          >
+                            {user.role === 'admin' ? 'Make viewer' : 'Make admin'}
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+          <div className="panel-surface overflow-hidden">
+            <div className="flex items-center justify-between border-b border-border/70 px-4 py-4">
+              <div>
                 <h2 className="text-lg font-semibold">Members</h2>
                 <p className="text-sm text-muted-foreground">
                   Add, rename, activate, deactivate, or remove member records.
@@ -551,6 +642,7 @@ export function AdminPage() {
               }
             }}
           />
+          <UserFormDialog open={userDialogOpen} onOpenChange={setUserDialogOpen} />
           <AlertDialog open={Boolean(deletingMember)} onOpenChange={(open) => !open && setDeletingMember(null)}>
             <AlertDialogContent>
               <AlertDialogHeader>

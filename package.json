@@ -11,7 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "supabase:push": "npx supabase db push --linked --include-seed",
-    "supabase:deploy": "npx supabase functions deploy sync-etoro-portfolio --use-api",
+    "supabase:deploy": "npx supabase functions deploy sync-etoro-portfolio --use-api && npx supabase functions deploy manage-club-users --use-api && npx supabase functions deploy generate-daily-review --use-api",
     "supabase:start": "npx supabase start",
     "supabase:stop": "npx supabase stop",
     "supabase:reset": "npx supabase db reset",

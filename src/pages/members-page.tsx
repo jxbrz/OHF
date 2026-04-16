@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { Users } from 'lucide-react'
 import { EmptyState } from '@/components/shared/empty-state'
 import { PageHeader } from '@/components/shared/page-header'
@@ -13,11 +14,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { MemberDetailDialog } from '@/features/members/member-detail-dialog'
 import { fetchClubData } from '@/lib/api'
 import { formatCurrency, formatDateTime, formatNumber } from '@/lib/formatters'
 import { sortItems, type SortConfig } from '@/lib/sorting'
-import type { MemberSummaryRow } from '@/types/app'
 
 type MembersSortKey =
   | 'name'
@@ -31,7 +30,6 @@ export function MembersPage() {
     key: 'currentValue',
     direction: 'desc',
   })
-  const [selectedMember, setSelectedMember] = useState<MemberSummaryRow | null>(null)
   const clubQuery = useQuery({
     queryKey: ['club-data'],
     queryFn: fetchClubData,
@@ -48,6 +46,7 @@ export function MembersPage() {
   }
 
   const data = clubQuery.data
+  const fundCurrency = data?.fundCurrency === 'USD' ? 'USD' : 'GBP'
   const members = data
     ? sortItems(data.memberSummaries, sortConfig, {
         netUnits: (item) => item.netUnits,
@@ -127,13 +126,12 @@ export function MembersPage() {
                 {members.map((member) => (
                   <TableRow key={member.id}>
                     <TableCell>
-                      <button
-                        className="font-medium text-foreground underline-offset-4 hover:underline"
-                        onClick={() => setSelectedMember(member)}
-                        type="button"
+                      <Link
+                        className="-ml-2 inline-flex items-center rounded-lg px-2 py-1 text-left font-medium text-foreground transition hover:bg-secondary/60 hover:text-foreground"
+                        to={`/members/${member.id}`}
                       >
                         {member.name}
-                      </button>
+                      </Link>
                       {member.lastActivityAt ? (
                         <div className="text-xs text-muted-foreground">
                           Last activity {formatDateTime(member.lastActivityAt)}
@@ -142,28 +140,15 @@ export function MembersPage() {
                     </TableCell>
                     <TableCell>{formatNumber(member.netUnits, 6)}</TableCell>
                     <TableCell>{(member.ownershipPct * 100).toFixed(2)}%</TableCell>
-                    <TableCell>{formatCurrency(member.currentValue)}</TableCell>
+                    <TableCell>{formatCurrency(member.currentValue, fundCurrency)}</TableCell>
                     <TableCell>
-                      <PnlValue value={member.totalReturn} />
+                      <PnlValue value={member.totalReturn} currency={fundCurrency} />
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </div>
-          <MemberDetailDialog
-            member={selectedMember}
-            members={data.members}
-            open={Boolean(selectedMember)}
-            fundCurrency={data.fundCurrency === 'USD' ? 'USD' : 'GBP'}
-            snapshots={data.snapshots}
-            transactions={data.transactions}
-            onOpenChange={(open) => {
-              if (!open) {
-                setSelectedMember(null)
-              }
-            }}
-          />
         </>
       )}
     </div>

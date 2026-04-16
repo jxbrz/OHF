@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import {
   Area,
   AreaChart,
@@ -8,70 +10,91 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { ActivitySquare, ArrowDownRight, ArrowUpRight, Wallet } from 'lucide-react'
+import { ActivitySquare, ArrowDownRight, ArrowUpRight, BookText, Wallet } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { ChartTimeframeToggle } from '@/components/shared/chart-timeframe-toggle'
 import { EmptyState } from '@/components/shared/empty-state'
 import { PnlValue } from '@/components/shared/pnl-value'
 import { fetchClubData } from '@/lib/api'
+import { getEvenNumericAxis } from '@/lib/chart-axes'
+import {
+  formatTimeframeTick,
+  getTimeframeTicks,
+  getTimeframeChangeSummary,
+  getTimeframedSnapshotSeries,
+  TIMEFRAME_WINDOWS,
+  type ChartTimeframe,
+} from '@/lib/chart-timeframes'
 import {
   formatCurrency,
   formatCurrencyAxis,
+  formatDate,
   formatDateTime,
-  formatSignedCurrency,
+  formatSignedUnitPrice,
   formatNumber,
 } from '@/lib/formatters'
 import { cn } from '@/lib/utils'
-import type { SnapshotChartPoint } from '@/types/app'
 
-function getChartDomain(values: number[]) {
-  const numericValues = values.filter((value) => Number.isFinite(value))
-
-  if (numericValues.length === 0) {
-    return [0, 1] as const
+function extractReviewNarrative(rawJson: unknown) {
+  if (
+    rawJson &&
+    typeof rawJson === 'object' &&
+    !Array.isArray(rawJson) &&
+    typeof (rawJson as { dailyNarrative?: unknown }).dailyNarrative === 'string'
+  ) {
+    return ((rawJson as { dailyNarrative: string }).dailyNarrative || '').trim()
   }
 
-  const minValue = Math.min(...numericValues)
-  const maxValue = Math.max(...numericValues)
-  const range = maxValue - minValue
-  const padding = Math.max(range * 0.16, 4)
-
-  if (range === 0) {
-    return [minValue - padding, maxValue + padding] as const
+  if (
+    rawJson &&
+    typeof rawJson === 'object' &&
+    !Array.isArray(rawJson) &&
+    Array.isArray((rawJson as { bulletPoints?: unknown[] }).bulletPoints)
+  ) {
+    return (rawJson as { bulletPoints: unknown[] }).bulletPoints
+      .filter(
+        (entry): entry is string => typeof entry === 'string' && entry.trim() !== ''
+      )
+      .join(' ')
   }
 
-  return [minValue - padding, maxValue + padding] as const
+  return ''
 }
 
-function getWeeklyPerformance(series: SnapshotChartPoint[]) {
-  if (series.length === 0) {
-    return null
+function extractReviewOutlook(rawJson: unknown) {
+  if (
+    rawJson &&
+    typeof rawJson === 'object' &&
+    !Array.isArray(rawJson) &&
+    typeof (rawJson as { outlookNarrative?: unknown }).outlookNarrative === 'string'
+  ) {
+    return ((rawJson as { outlookNarrative: string }).outlookNarrative || '').trim()
   }
 
-  const sortedSeries = [...series].sort(
-    (left, right) => new Date(left.capturedAt).getTime() - new Date(right.capturedAt).getTime()
-  )
-  const latestPoint = sortedSeries.at(-1)
-
-  if (!latestPoint) {
-    return null
+  if (
+    rawJson &&
+    typeof rawJson === 'object' &&
+    !Array.isArray(rawJson) &&
+    Array.isArray((rawJson as { outlookPoints?: unknown[] }).outlookPoints)
+  ) {
+    return (rawJson as { outlookPoints: unknown[] }).outlookPoints
+      .filter(
+        (entry): entry is string => typeof entry === 'string' && entry.trim() !== ''
+      )
+      .join(' ')
   }
 
-  const latestTimestamp = new Date(latestPoint.capturedAt).getTime()
-  const weekAgoTimestamp = latestTimestamp - 7 * 24 * 60 * 60 * 1000
-  const baselinePoint =
-    [...sortedSeries]
-      .reverse()
-      .find((point) => new Date(point.capturedAt).getTime() <= weekAgoTimestamp) ??
-    sortedSeries[0]
+  return ''
+}
 
-  const changeAmount = latestPoint.totalAccountValue - baselinePoint.totalAccountValue
-  const changePct =
-    baselinePoint.totalAccountValue > 0 ? changeAmount / baselinePoint.totalAccountValue : 0
+function extractReviewMeta(rawJson: unknown) {
+  if (!rawJson || typeof rawJson !== 'object' || Array.isArray(rawJson)) {
+    return { scheduled: false, usedFallback: false }
+  }
 
   return {
-    changeAmount,
-    changePct,
-    baselineAt: baselinePoint.capturedAt,
-    latestAt: latestPoint.capturedAt,
+    scheduled: (rawJson as { scheduled?: unknown }).scheduled === true,
+    usedFallback: typeof (rawJson as { openAiError?: unknown }).openAiError === 'string',
   }
 }
 
@@ -95,6 +118,7 @@ function OverviewSkeleton() {
 }
 
 export function DashboardPage() {
+  const [timeframe, setTimeframe] = useState<ChartTimeframe>('week')
   const clubQuery = useQuery({
     queryKey: ['club-data'],
     queryFn: fetchClubData,
@@ -128,13 +152,24 @@ export function DashboardPage() {
 
   const fundCurrency = data.fundCurrency === 'USD' ? 'USD' : 'GBP'
   const brokerCurrency = data.brokerCurrency === 'GBP' ? 'GBP' : 'USD'
-  const weeklyPerformance = getWeeklyPerformance(data.snapshotSeries)
-  const latestSnapshotAt = data.latestSnapshot?.captured_at ?? weeklyPerformance?.latestAt ?? null
-  const accountValueDomain = getChartDomain(
-    data.snapshotSeries.map((point) => point.totalAccountValue)
+  const timeframeSeries = getTimeframedSnapshotSeries(data.snapshotSeries, timeframe)
+  const timeframePerformance = getTimeframeChangeSummary(data.snapshotSeries, timeframe)
+  const latestSnapshotAt = data.latestSnapshot?.captured_at ?? timeframePerformance?.latestAt ?? null
+  const accountValueAxis = getEvenNumericAxis(
+    timeframeSeries.points.map((point) => point.totalAccountValue),
+    {
+      paddingRatio: 0.16,
+      minimumPadding: 4,
+    }
+  )
+  const timeframeTicks = getTimeframeTicks(
+    timeframeSeries.rangeStartMs,
+    timeframeSeries.rangeEndMs,
+    timeframe
   )
   const accountValueTooltipFormatter = (value: unknown) =>
     formatCurrency(Number(Array.isArray(value) ? value[0] : value ?? 0), fundCurrency)
+  const timeframeLabel = TIMEFRAME_WINDOWS[timeframe].changeLabel
 
   return (
     <div className="space-y-8 pb-4">
@@ -142,6 +177,9 @@ export function DashboardPage() {
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(91,155,235,0.18),transparent_38%),radial-gradient(circle_at_bottom,rgba(49,167,154,0.12),transparent_34%)]" />
         <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
         <div className="relative z-10 max-w-3xl text-center">
+          <div className="mb-5 flex justify-center">
+            <ChartTimeframeToggle value={timeframe} onChange={setTimeframe} />
+          </div>
           <p className="mb-5 text-xs uppercase tracking-[0.18em] text-muted-foreground">
             Account value
           </p>
@@ -149,29 +187,33 @@ export function DashboardPage() {
             {formatCurrency(data.dashboardSummary.totalAccountValue, fundCurrency)}
           </div>
           <div className="mt-4 flex items-center justify-center">
-            {weeklyPerformance ? (
+            {timeframePerformance ? (
               <p
                 className={cn(
                   'inline-flex items-center gap-2 text-sm',
-                  weeklyPerformance.changeAmount > 0
+                  timeframePerformance.changeAmount > 0
                     ? 'text-gain'
-                    : weeklyPerformance.changeAmount < 0
+                    : timeframePerformance.changeAmount < 0
                       ? 'text-loss'
                       : 'text-muted-foreground'
                 )}
               >
-                {weeklyPerformance.changeAmount > 0 ? (
+                {timeframePerformance.changeAmount > 0 ? (
                   <ArrowUpRight className="size-3.5" />
-                ) : weeklyPerformance.changeAmount < 0 ? (
+                ) : timeframePerformance.changeAmount < 0 ? (
                   <ArrowDownRight className="size-3.5" />
                 ) : (
                   <ActivitySquare className="size-3.5" />
                 )}
-                <span>{formatSignedCurrency(weeklyPerformance.changeAmount, fundCurrency)} this week</span>
+                <span>
+                  Unit price {formatSignedUnitPrice(timeframePerformance.changeAmount, fundCurrency)} {timeframeLabel}
+                  {' · '}
+                  {(timeframePerformance.changePct * 100).toFixed(2)}%
+                </span>
               </p>
             ) : (
               <p className="text-sm text-muted-foreground">
-                Waiting for enough history to show weekly movement
+                Waiting for enough history to show {timeframeLabel} movement
               </p>
             )}
           </div>
@@ -183,10 +225,11 @@ export function DashboardPage() {
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.95fr)]">
         <section className="panel-surface p-5 sm:p-6">
-          <div className="mb-5">
+          <div className="mb-5 flex items-center justify-between gap-4">
             <h2 className="text-lg font-semibold tracking-tight text-foreground">Equity curve</h2>
+            <ChartTimeframeToggle value={timeframe} onChange={setTimeframe} />
           </div>
-          {data.snapshotSeries.length === 0 ? (
+          {timeframeSeries.points.length === 0 ? (
             <EmptyState
               icon={ActivitySquare}
               title="No curve yet"
@@ -195,7 +238,7 @@ export function DashboardPage() {
           ) : (
             <div className="h-[26rem]">
               <ResponsiveContainer>
-                <AreaChart data={data.snapshotSeries}>
+                <AreaChart data={timeframeSeries.points}>
                   <defs>
                     <linearGradient id="overview-equity-fill" x1="0" x2="0" y1="0" y2="1">
                       <stop offset="0%" stopColor="rgba(94, 171, 255, 0.42)" />
@@ -203,28 +246,32 @@ export function DashboardPage() {
                     </linearGradient>
                   </defs>
                   <XAxis
-                    dataKey="capturedAt"
-                    tickFormatter={(value) =>
-                      new Date(value).toLocaleDateString('en-GB', {
-                        month: 'short',
-                        day: 'numeric',
-                      })
-                    }
+                    type="number"
+                    dataKey="capturedAtMs"
+                    scale="time"
+                    domain={[timeframeSeries.rangeStartMs, timeframeSeries.rangeEndMs]}
+                    ticks={timeframeTicks}
+                    tickFormatter={(value) => formatTimeframeTick(Number(value), timeframe)}
                     tickLine={false}
                     axisLine={false}
+                    tickMargin={10}
+                    minTickGap={24}
+                    interval={0}
                     dy={8}
                   />
                   <CartesianGrid vertical={false} stroke="rgba(137, 176, 214, 0.08)" />
                   <YAxis
-                    domain={accountValueDomain}
+                    domain={accountValueAxis.domain}
+                    ticks={accountValueAxis.ticks}
                     tickFormatter={(value) => formatCurrencyAxis(Number(value), fundCurrency, 0)}
                     width={78}
                     tickLine={false}
                     axisLine={false}
+                    tickMargin={10}
                   />
                   <Tooltip
                     formatter={accountValueTooltipFormatter}
-                    labelFormatter={(value) => formatDateTime(String(value))}
+                    labelFormatter={(value) => formatDateTime(new Date(Number(value)).toISOString())}
                     contentStyle={{
                       background: 'rgba(20, 28, 45, 0.96)',
                       border: '1px solid rgba(137, 176, 214, 0.18)',
@@ -281,6 +328,83 @@ export function DashboardPage() {
           )}
         </section>
       </div>
+
+      <section className="panel-surface p-5 sm:p-6">
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold tracking-tight text-foreground">Latest daily review</h2>
+            <p className="text-sm text-muted-foreground">
+              A short internal note for the group based on the most recent reviewed trading day.
+            </p>
+          </div>
+          <Button asChild size="sm" variant="outline">
+            <Link to="/reviews">
+              <BookText className="size-4" />
+              View log
+            </Link>
+          </Button>
+        </div>
+
+        {data.latestDailyReview ? (
+          (() => {
+            const dailyNarrative = extractReviewNarrative(data.latestDailyReview.raw_json)
+            const outlookPoints = extractReviewOutlook(data.latestDailyReview.raw_json)
+            const meta = extractReviewMeta(data.latestDailyReview.raw_json)
+
+            return (
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_280px]">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                    <span>{formatDate(data.latestDailyReview.review_date)}</span>
+                    <span className="rounded-full border border-border/70 bg-secondary/20 px-2.5 py-1 normal-case tracking-normal text-foreground">
+                      {meta.scheduled ? 'Auto post' : 'Manual post'}
+                    </span>
+                    <span className="rounded-full border border-border/70 bg-secondary/20 px-2.5 py-1 normal-case tracking-normal text-foreground">
+                      {meta.usedFallback ? 'System summary' : 'AI review'}
+                    </span>
+                  </div>
+                  <h3 className="mt-3 text-2xl font-semibold tracking-tight text-foreground">
+                    {data.latestDailyReview.title}
+                  </h3>
+                  <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
+                    {data.latestDailyReview.summary}
+                  </p>
+
+                  {dailyNarrative ? (
+                    <p className="mt-3 max-w-3xl text-sm leading-7 text-foreground">
+                      {dailyNarrative}
+                    </p>
+                  ) : null}
+
+                  {outlookPoints.length > 0 ? (
+                    <div className="mt-4 rounded-2xl border border-border/70 bg-secondary/15 p-4">
+                      <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                        Looking ahead
+                      </div>
+                      <div className="mt-2 text-sm text-foreground">{outlookPoints[0]}</div>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="rounded-xl border border-border/70 bg-secondary/25 px-4 py-3 text-sm">
+                  <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Generated</div>
+                  <div className="mt-2 font-medium text-foreground">
+                    {formatDateTime(data.latestDailyReview.generated_at)}
+                  </div>
+                  {data.latestDailyReview.model ? (
+                    <div className="mt-1 text-xs text-muted-foreground">{data.latestDailyReview.model}</div>
+                  ) : null}
+                </div>
+              </div>
+            )
+          })()
+        ) : (
+          <EmptyState
+            icon={BookText}
+            title="No daily review yet"
+            description="Generate the first review and it will appear here as a quick note for the group."
+          />
+        )}
+      </section>
     </div>
   )
 }

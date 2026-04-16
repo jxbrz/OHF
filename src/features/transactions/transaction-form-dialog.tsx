@@ -1,4 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
+import { resolveSuggestedUnitPriceAtDate } from '@shared/calculations'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { Controller, useForm, useWatch } from 'react-hook-form'
@@ -18,7 +19,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { DIRECT_TRANSACTION_TYPE_OPTIONS } from '@/lib/constants'
 import { createTransaction, updateTransaction } from '@/lib/api'
-import { formatNumber, toDateTimeLocalValue } from '@/lib/formatters'
+import { formatDateTime, formatNumber, toDateTimeLocalValue } from '@/lib/formatters'
 import type { FundTransactionRecord } from '@/types/app'
 import type { Tables } from '@/types/database'
 
@@ -34,6 +35,7 @@ const transactionSchema = z.object({
 
 type TransactionFormValues = z.input<typeof transactionSchema>
 type TransactionSubmitValues = z.output<typeof transactionSchema>
+export type TransactionDraftValues = Partial<TransactionFormValues>
 
 function resolveDirectTransactionType(type?: FundTransactionRecord['type']): TransactionSubmitValues['type'] {
   switch (type) {
@@ -50,17 +52,19 @@ function resolveDirectTransactionType(type?: FundTransactionRecord['type']): Tra
 interface TransactionFormDialogProps {
   members: Tables<'members'>[]
   profileId: string | null
-  defaultUnitPrice: number
+  snapshots: Tables<'portfolio_snapshots'>[]
+  startingUnitPrice: number
   open: boolean
   onOpenChange: (open: boolean) => void
   transaction?: FundTransactionRecord | null
-  draftTransaction?: Partial<TransactionFormValues> | null
+  draftTransaction?: TransactionDraftValues | null
 }
 
 export function TransactionFormDialog({
   members,
   profileId,
-  defaultUnitPrice,
+  snapshots,
+  startingUnitPrice,
   open,
   onOpenChange,
   transaction,
@@ -76,7 +80,7 @@ export function TransactionFormDialog({
         ? toDateTimeLocalValue(transaction.date)
         : draftTransaction?.date ?? toDateTimeLocalValue(new Date().toISOString()),
       amount: transaction?.amount ?? draftTransaction?.amount ?? 0,
-      unit_price_at_time: transaction?.unit_price_at_time ?? draftTransaction?.unit_price_at_time ?? defaultUnitPrice,
+      unit_price_at_time: transaction?.unit_price_at_time ?? draftTransaction?.unit_price_at_time ?? undefined,
       units_amount: transaction?.units_amount ?? draftTransaction?.units_amount ?? 0,
       notes: transaction?.notes ?? draftTransaction?.notes ?? '',
     },
@@ -85,6 +89,10 @@ export function TransactionFormDialog({
   const watchedType = useWatch({
     control: form.control,
     name: 'type',
+  })
+  const watchedDate = useWatch({
+    control: form.control,
+    name: 'date',
   })
   const watchedAmount = Number(
     useWatch({
@@ -113,11 +121,17 @@ export function TransactionFormDialog({
         ? toDateTimeLocalValue(transaction.date)
         : draftTransaction?.date ?? toDateTimeLocalValue(new Date().toISOString()),
       amount: transaction?.amount ?? draftTransaction?.amount ?? 0,
-      unit_price_at_time: transaction?.unit_price_at_time ?? draftTransaction?.unit_price_at_time ?? defaultUnitPrice,
+      unit_price_at_time: transaction?.unit_price_at_time ?? draftTransaction?.unit_price_at_time ?? undefined,
       units_amount: transaction?.units_amount ?? draftTransaction?.units_amount ?? 0,
       notes: transaction?.notes ?? draftTransaction?.notes ?? '',
     })
-  }, [defaultUnitPrice, draftTransaction, form, open, transaction])
+  }, [draftTransaction, form, open, transaction])
+
+  const suggestedUnitPrice = resolveSuggestedUnitPriceAtDate({
+    snapshots,
+    transactionDate: watchedDate ? new Date(watchedDate).toISOString() : null,
+    startingUnitPrice,
+  })
 
   useEffect(() => {
     if (watchedType === 'MANUAL_ADJUSTMENT' || watchedUnitPrice <= 0) {
@@ -243,10 +257,17 @@ export function TransactionFormDialog({
           >
             <Input
               id="transaction-unit-price"
+              placeholder={suggestedUnitPrice.unitPrice.toFixed(8)}
               step="0.00000001"
               type="number"
               {...form.register('unit_price_at_time')}
             />
+            <span className="rounded-lg bg-secondary/35 px-3 py-2 text-xs leading-5 text-muted-foreground">
+              Suggested price {formatNumber(suggestedUnitPrice.unitPrice, 8)} from{' '}
+              {suggestedUnitPrice.source === 'snapshot' && suggestedUnitPrice.snapshotCapturedAt
+                ? `the latest snapshot before this date (${formatDateTime(suggestedUnitPrice.snapshotCapturedAt)})`
+                : 'the starting unit price'}.
+            </span>
           </Field>
           <Field
             className="min-w-0"

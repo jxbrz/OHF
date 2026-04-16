@@ -5,9 +5,10 @@ import { AdminPage } from '@/pages/admin-page'
 import { DashboardPage } from '@/pages/dashboard-page'
 import { HoldingsPage } from '@/pages/holdings-page'
 import { LoginPage } from '@/pages/login-page'
+import { MemberProfilePage } from '@/pages/member-profile-page'
 import { MembersPage } from '@/pages/members-page'
 import { NotFoundPage } from '@/pages/not-found-page'
-import { ReconciliationPage } from '@/pages/reconciliation-page'
+import { ReviewsPage } from '@/pages/reviews-page'
 import { SnapshotsPage } from '@/pages/snapshots-page'
 import { TransactionsPage } from '@/pages/transactions-page'
 
@@ -26,15 +27,9 @@ export function AppRouter() {
           <Route index element={<DashboardPage />} />
           <Route path="/holdings" element={<HoldingsPage />} />
           <Route path="/members" element={<MembersPage />} />
+          <Route path="/members/:memberId" element={<MemberProfilePage />} />
           <Route path="/transactions" element={<TransactionsPage />} />
-          <Route
-            path="/reconciliation"
-            element={
-              <RequireAuth requireAdmin>
-                <ReconciliationPage />
-              </RequireAuth>
-            }
-          />
+          <Route path="/reviews" element={<ReviewsPage />} />
           <Route path="/snapshots" element={<SnapshotsPage />} />
           <Route
             path="/admin"
