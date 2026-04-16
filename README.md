@@ -14,7 +14,7 @@ by Charles Dobson and Stanley Gay
 
 - Private email/password login flow with authenticated routes and admin/viewer roles
 - SQL schema + RLS for profiles, members, transactions, snapshots, holdings, settings, and audit logs
-- Unit-based fund accounting with test coverage for units, ownership, pricing, member invested/returned capital, and transfer-aware returns
+- Unit-based fund accounting with test coverage for units, ownership, pricing, separated fund cashflows, private transfer cost basis, and transfer-aware returns
 - Admin/member/transaction UI, sortable tables, charts, toasts, dialogs, and finance-style dark theme
 - Secure `sync-etoro-portfolio` Edge Function with mock fallback and audit logging
 - Sync-time FX conversion so broker totals can stay in USD while the stored fund ledger remains in GBP
@@ -104,7 +104,7 @@ npx supabase status -o env
 ```powershell
 npm run supabase:push
 npm run supabase:deploy
-npm run supabase:schedule:market-close
+npm run supabase:schedule:hourly
 npm run supabase:types:linked
 npm run seed:admin
 npm run import:workbook -- --replace
@@ -128,6 +128,29 @@ npm run lint
 npm run test
 ```
 
+## Vercel deployment
+
+This app can be deployed as a Vite SPA on Vercel.
+
+1. Import the GitHub repo into Vercel.
+2. Set these project environment variables in Vercel:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+
+Do not add `SUPABASE_SERVICE_ROLE_KEY` to the frontend deployment.
+
+3. Deploy the project.
+4. Add your custom domain in `Project -> Settings -> Domains`.
+5. Copy the exact DNS record Vercel shows and add it in your DNS provider.
+
+For `ohf.stanlgy.uk`, this will normally be a `CNAME`:
+
+- Host: `ohf`
+- Value: the exact Vercel-provided target
+
+This repo includes [`vercel.json`](/c:/Users/Stanl/OHF/vercel.json) so Vercel will build the app as a Vite project and route SPA paths like `/members` and `/transactions` back to `index.html`.
+
 ## eToro sync behavior
 
 - The browser never receives eToro credentials.
@@ -137,7 +160,8 @@ npm run test
 - If no manual broker-to-fund FX override is configured, the sync fetches the latest official ECB reference rates and stores the applied FX metadata inside each snapshot.
 - If live credentials are missing, or mock mode is enabled, the sync falls back to deterministic mock data.
 - Admins can trigger the sync from the `/admin` page. Each sync stores one `portfolio_snapshots` row plus its `holding_snapshots`.
-- `npm run supabase:schedule:market-close` creates two weekday cron jobs at `20:05 UTC` and `21:05 UTC`. The Edge Function deduplicates by New York market date so you get one post-close snapshot per US trading day across daylight-saving changes.
+- `npm run supabase:schedule:hourly` creates one cron job at `5` minutes past every hour, and the function deduplicates scheduled captures inside the same UTC hour.
+- Open browser tabs also refetch their dashboard data once per hour, so the UI catches up after the background snapshot lands.
 
 ## Workbook import behavior
 
@@ -170,6 +194,6 @@ supabase/
 ## Notes
 
 - The committed [`src/types/database.ts`](/c:/Users/Stanl/OHF/src/types/database.ts) is a checked-in snapshot. For a hosted project, regenerate it with `npm run supabase:types:linked` after linking the CLI.
-- Member return reporting now separates `total invested`, `total returned`, `net invested`, `current value`, and `total return`, while still preserving the immutable raw ledger rows underneath.
+- Member reporting now separates fund deposits/withdrawals from private unit purchases/sales, while still preserving the immutable raw ledger rows underneath.
 - Member-to-member unit sales should be recorded through the dedicated transfer flow rather than creating `TRANSFER_IN` / `TRANSFER_OUT` rows manually.
 - `FEE` is included in schema/type support for forward compatibility, but V1 still treats the app as a read-only broker integration plus manual internal accounting dashboard.

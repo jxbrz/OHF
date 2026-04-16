@@ -83,24 +83,10 @@ function readSettingBoolean(
   return fallback
 }
 
-function getDateInTimeZone(timeZone: string) {
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  })
-
-  const parts = formatter.formatToParts(new Date())
-  const year = parts.find((part) => part.type === 'year')?.value
-  const month = parts.find((part) => part.type === 'month')?.value
-  const day = parts.find((part) => part.type === 'day')?.value
-
-  if (!year || !month || !day) {
-    throw new Error(`Unable to resolve the current date for timezone ${timeZone}.`)
-  }
-
-  return `${year}-${month}-${day}`
+function getHourlySyncBucket(now = new Date()) {
+  const bucket = new Date(now)
+  bucket.setUTCMinutes(0, 0, 0)
+  return bucket.toISOString()
 }
 
 Deno.serve(async (request) => {
@@ -186,7 +172,7 @@ Deno.serve(async (request) => {
   let auditPayload: Record<string, unknown> = {
     actorProfileId,
     executedAt: new Date().toISOString(),
-    trigger: requestBody.trigger ?? (isScheduledRequest ? 'scheduled_market_close' : 'manual'),
+    trigger: requestBody.trigger ?? (isScheduledRequest ? 'scheduled_hourly_sync' : 'manual'),
     scheduleKey: requestBody.scheduleKey ?? null,
   }
 
@@ -213,35 +199,33 @@ Deno.serve(async (request) => {
     const brokerCurrency = readSettingString(settingsMap, 'broker_account_currency', 'USD')
     const fundCurrency = readSettingString(settingsMap, 'fund_base_currency', 'GBP')
     const manualBrokerToFundRate = readSettingNumber(settingsMap, 'broker_to_fund_fx_rate')
-    const autoMarketCloseSyncEnabled = readSettingBoolean(settingsMap, 'auto_market_close_sync_enabled', true)
-    const marketCloseTimezone = readSettingString(
+    const autoScheduledSyncEnabled = readSettingBoolean(
       settingsMap,
-      'market_close_sync_timezone',
-      'America/New_York',
+      'auto_hourly_sync_enabled',
+      readSettingBoolean(settingsMap, 'auto_market_close_sync_enabled', true)
+    )
+    const currentSyncBucket = getHourlySyncBucket()
+    const lastScheduledSyncBucket = readSettingString(
+      settingsMap,
+      'last_hourly_sync_bucket',
+      '',
       { uppercase: false }
     )
-    const marketCloseLabel = readSettingString(settingsMap, 'market_close_sync_market', 'US')
-    const currentMarketDate = getDateInTimeZone(marketCloseTimezone)
-    const lastScheduledMarketDate = readSettingString(
-      settingsMap,
-      'last_market_close_sync_date',
-      ''
-    )
 
-    if (isScheduledRequest && !autoMarketCloseSyncEnabled) {
+    if (isScheduledRequest && !autoScheduledSyncEnabled) {
       return jsonResponse({
         success: true,
         skipped: true,
-        reason: 'Auto market-close sync is disabled.',
+        reason: 'Auto hourly sync is disabled.',
       })
     }
 
-    if (isScheduledRequest && lastScheduledMarketDate === currentMarketDate) {
+    if (isScheduledRequest && lastScheduledSyncBucket === currentSyncBucket) {
       return jsonResponse({
         success: true,
         skipped: true,
-        reason: `Market-close sync already captured for ${currentMarketDate}.`,
-        marketDate: currentMarketDate,
+        reason: `Hourly sync already captured for ${currentSyncBucket}.`,
+        syncBucket: currentSyncBucket,
       })
     }
 
@@ -254,6 +238,7 @@ Deno.serve(async (request) => {
     const normalized = normalizeEtoroData({
       pnl: etoroBundle.pnl as { clientPortfolio?: Record<string, unknown> },
       identity: etoroBundle.identity as Record<string, unknown>,
+      instrumentMetadata: etoroBundle.instrumentMetadata,
       fxContext: fxConversion,
     })
     const totalUnits = calculateTotalUnitsOutstanding(transactions)
@@ -271,19 +256,16 @@ Deno.serve(async (request) => {
       totalAccountValue: normalized.totalAccountValue,
       fx: fxConversion,
       scheduled: isScheduledRequest,
-      marketDate: currentMarketDate,
-      marketCloseTimezone,
+      syncBucket: isScheduledRequest ? currentSyncBucket : null,
     }
 
     const rawJson = {
       ...normalized.rawJson,
       scheduler: isScheduledRequest
         ? {
-            market: requestBody.market ?? marketCloseLabel,
-            marketDate: currentMarketDate,
-            timezone: marketCloseTimezone,
             scheduleKey: requestBody.scheduleKey ?? null,
-            trigger: requestBody.trigger ?? 'scheduled_market_close',
+            syncBucket: currentSyncBucket,
+            trigger: requestBody.trigger ?? 'scheduled_hourly_sync',
           }
         : null,
     }
@@ -329,11 +311,11 @@ Deno.serve(async (request) => {
     if (isScheduledRequest) {
       await adminClient.from('app_settings').upsert([
         {
-          key: 'last_market_close_sync_date',
-          value: { value: currentMarketDate },
+          key: 'last_hourly_sync_bucket',
+          value: { value: currentSyncBucket },
         },
         {
-          key: 'last_market_close_sync_snapshot_id',
+          key: 'last_hourly_sync_snapshot_id',
           value: { value: snapshot.id },
         },
       ])
@@ -358,7 +340,7 @@ Deno.serve(async (request) => {
       holdingsCount: normalized.holdings.length,
       usedMock: etoroBundle.usedMock,
       scheduled: isScheduledRequest,
-      marketDate: isScheduledRequest ? currentMarketDate : null,
+      syncBucket: isScheduledRequest ? currentSyncBucket : null,
       brokerCurrency: fxConversion.brokerCurrency,
       fundCurrency: fxConversion.fundCurrency,
       fxRate: fxConversion.rate,

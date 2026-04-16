@@ -9,6 +9,7 @@ import {
 } from 'recharts'
 import { ActivitySquare } from 'lucide-react'
 import { EmptyState } from '@/components/shared/empty-state'
+import { MetricCard } from '@/components/shared/metric-card'
 import { PageHeader } from '@/components/shared/page-header'
 import {
   Table,
@@ -20,6 +21,34 @@ import {
 } from '@/components/ui/table'
 import { fetchClubData } from '@/lib/api'
 import { formatCurrency, formatCurrencyAxis, formatDateTime, formatNumber } from '@/lib/formatters'
+
+function getChartDomain(
+  values: number[],
+  options?: {
+    paddingRatio?: number
+    minimumPadding?: number
+  }
+) {
+  const numericValues = values.filter((value) => Number.isFinite(value))
+
+  if (numericValues.length === 0) {
+    return [0, 1] as const
+  }
+
+  const minValue = Math.min(...numericValues)
+  const maxValue = Math.max(...numericValues)
+  const range = maxValue - minValue
+  const padding = Math.max(
+    range * (options?.paddingRatio ?? 0.12),
+    options?.minimumPadding ?? 1
+  )
+
+  if (range === 0) {
+    return [minValue - padding, maxValue + padding] as const
+  }
+
+  return [minValue - padding, maxValue + padding] as const
+}
 
 export function SnapshotsPage() {
   const clubQuery = useQuery({
@@ -40,12 +69,30 @@ export function SnapshotsPage() {
   const data = clubQuery.data
   const currencyTooltipFormatter = (value: unknown) =>
     formatCurrency(Number(Array.isArray(value) ? value[0] : value ?? 0))
+  const accountValueDomain = data
+    ? getChartDomain(
+        data.snapshotSeries.map((point) => point.totalAccountValue),
+        {
+          paddingRatio: 0.14,
+          minimumPadding: 5,
+        }
+      )
+    : [0, 1]
+  const unitPriceDomain = data
+    ? getChartDomain(
+        data.snapshotSeries.map((point) => point.unitPrice),
+        {
+          paddingRatio: 0.18,
+          minimumPadding: 0.005,
+        }
+      )
+    : [0, 1]
 
   return (
     <div className="space-y-8">
       <PageHeader
         title="Performance & snapshots"
-        description="Historical portfolio and unit-price snapshots captured by the backend sync flow. Snapshot totals, cash, and P&L are stored in the fund currency after sync-time FX conversion."
+        description="Historical portfolio and unit-price snapshots captured by the backend sync flow. Performance is measured from the configured tracking baseline, not the original November starting capital."
       />
       {!data || data.snapshotSeries.length === 0 ? (
         <EmptyState
@@ -55,6 +102,32 @@ export function SnapshotsPage() {
         />
       ) : (
         <>
+          <div className="grid gap-4 md:grid-cols-3">
+            <MetricCard
+              label="Tracking baseline"
+              value={
+                data.dashboardSummary.performanceBaselineCapturedAt
+                  ? formatDateTime(data.dashboardSummary.performanceBaselineCapturedAt)
+                  : 'Not set'
+              }
+              secondary="First snapshot on or after the configured baseline date"
+            />
+            <MetricCard
+              label="Baseline unit price"
+              value={
+                data.dashboardSummary.performanceBaselineUnitPrice !== null
+                  ? formatCurrency(data.dashboardSummary.performanceBaselineUnitPrice)
+                  : 'Not set'
+              }
+              secondary="Used for reported performance"
+            />
+            <MetricCard
+              label="Performance since baseline"
+              tone={data.dashboardSummary.overallPerformancePct >= 0 ? 'positive' : 'negative'}
+              value={`${(data.dashboardSummary.overallPerformancePct * 100).toFixed(2)}%`}
+              secondary={`Current unit price ${formatCurrency(data.dashboardSummary.currentUnitPrice)}`}
+            />
+          </div>
           <div className="grid gap-6 xl:grid-cols-2">
             <div className="panel-surface p-5">
               <div className="mb-5 space-y-1">
@@ -73,7 +146,11 @@ export function SnapshotsPage() {
                         })
                       }
                     />
-                    <YAxis tickFormatter={(value) => formatCurrencyAxis(Number(value), 'GBP', 0)} width={72} />
+                    <YAxis
+                      domain={accountValueDomain}
+                      tickFormatter={(value) => formatCurrencyAxis(Number(value), 'GBP', 0)}
+                      width={72}
+                    />
                     <Tooltip formatter={currencyTooltipFormatter} labelFormatter={(value) => formatDateTime(String(value))} />
                     <Line dataKey="totalAccountValue" stroke="#30c59b" strokeWidth={2.4} dot={false} type="monotone" />
                   </LineChart>
@@ -97,7 +174,11 @@ export function SnapshotsPage() {
                         })
                       }
                     />
-                    <YAxis tickFormatter={(value) => formatCurrencyAxis(Number(value), 'GBP', 2)} width={72} />
+                    <YAxis
+                      domain={unitPriceDomain}
+                      tickFormatter={(value) => formatCurrencyAxis(Number(value), 'GBP', 2)}
+                      width={72}
+                    />
                     <Tooltip formatter={currencyTooltipFormatter} labelFormatter={(value) => formatDateTime(String(value))} />
                     <Line dataKey="unitPrice" stroke="#3a88f7" strokeWidth={2.4} dot={false} type="monotone" />
                   </LineChart>

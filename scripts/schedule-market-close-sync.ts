@@ -11,11 +11,11 @@ const projectUrl = process.env.SUPABASE_URL
 const syncCronSecret = process.env.SYNC_CRON_SECRET
 
 if (!projectUrl) {
-  throw new Error('SUPABASE_URL is required in .env.local to schedule the market-close sync.')
+  throw new Error('SUPABASE_URL is required in .env.local to schedule the hourly sync.')
 }
 
 if (!syncCronSecret) {
-  throw new Error('SYNC_CRON_SECRET is required in .env.functions to schedule the market-close sync.')
+  throw new Error('SYNC_CRON_SECRET is required in .env.functions to schedule the hourly sync.')
 }
 
 const functionUrl = `${projectUrl.replace(/\/+$/, '')}/functions/v1/sync-etoro-portfolio`
@@ -26,21 +26,22 @@ function sqlString(value: string) {
 
 const scheduleConfigs = [
   {
-    jobName: 'ohf-market-close-sync-2005-utc',
-    cron: '5 20 * * 1-5',
-    scheduleKey: 'us-market-close-2005-utc',
+    jobName: 'ohf-hourly-sync-05-past-utc',
+    cron: '5 * * * *',
+    scheduleKey: 'hourly-05-past-utc',
   },
-  {
-    jobName: 'ohf-market-close-sync-2105-utc',
-    cron: '5 21 * * 1-5',
-    scheduleKey: 'us-market-close-2105-utc',
-  },
+] as const
+
+const knownJobNames = [
+  'ohf-market-close-sync-2005-utc',
+  'ohf-market-close-sync-2105-utc',
+  'ohf-hourly-sync-05-past-utc',
 ] as const
 
 const unscheduleSql = `
 select cron.unschedule(jobid)
 from cron.job
-where jobname in (${scheduleConfigs.map((config) => sqlString(config.jobName)).join(', ')});
+where jobname in (${knownJobNames.map((jobName) => sqlString(jobName)).join(', ')});
 `
 
 const scheduleSql = scheduleConfigs
@@ -57,8 +58,7 @@ select cron.schedule(
         'x-sync-cron-secret', ${sqlString(syncCronSecret)}
       ),
       body := jsonb_build_object(
-        'trigger', 'scheduled_market_close',
-        'market', 'US',
+        'trigger', 'scheduled_hourly_sync',
         'scheduleKey', ${sqlString(config.scheduleKey)}
       ),
       timeout_milliseconds := 15000
@@ -78,12 +78,12 @@ ${scheduleSql}
 
 select jobid, jobname, schedule
 from cron.job
-where jobname like 'ohf-market-close-sync-%'
+where jobname in (${knownJobNames.map((jobName) => sqlString(jobName)).join(', ')})
 order by jobname;
 `
 
-const tempDirectory = mkdtempSync(join(tmpdir(), 'ohf-market-close-sync-'))
-const sqlFilePath = join(tempDirectory, 'schedule-market-close-sync.sql')
+const tempDirectory = mkdtempSync(join(tmpdir(), 'ohf-hourly-sync-'))
+const sqlFilePath = join(tempDirectory, 'schedule-hourly-sync.sql')
 writeFileSync(sqlFilePath, sql, 'utf8')
 
 try {

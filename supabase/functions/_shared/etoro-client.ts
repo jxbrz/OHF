@@ -7,10 +7,21 @@ interface EtoroIdentityResponse {
   [key: string]: unknown
 }
 
+interface EtoroInstrumentLookupItem {
+  internalInstrumentId?: number
+  internalSymbolFull?: string
+  internalInstrumentDisplayName?: string
+  logo35x35?: string
+  logo50x50?: string
+  logo150x150?: string
+  [key: string]: unknown
+}
+
 interface EtoroResponseBundle {
   usedMock: boolean
   identity: EtoroIdentityResponse
   pnl: Record<string, unknown>
+  instrumentMetadata: EtoroInstrumentLookupItem[]
 }
 
 function shouldUseMock(configuredMock: boolean): boolean {
@@ -65,6 +76,64 @@ async function fetchWithRetry(
   throw new Error(`eToro request failed after ${attempts} attempts.`)
 }
 
+function collectInstrumentIds(payload: Record<string, unknown>) {
+  const clientPortfolio =
+    payload.clientPortfolio &&
+    typeof payload.clientPortfolio === 'object' &&
+    !Array.isArray(payload.clientPortfolio)
+      ? payload.clientPortfolio as { positions?: Array<Record<string, unknown>> }
+      : null
+  const positions = Array.isArray(clientPortfolio?.positions) ? clientPortfolio.positions : []
+
+  return [...new Set(
+    positions
+      .map((position) => {
+        const rawId = position.instrumentId ?? position.instrumentID
+        const instrumentId =
+          typeof rawId === 'number'
+            ? rawId
+            : typeof rawId === 'string' && rawId.trim() !== ''
+              ? Number(rawId)
+              : NaN
+
+        return Number.isFinite(instrumentId) && instrumentId > 0 ? instrumentId : null
+      })
+      .filter((instrumentId): instrumentId is number => instrumentId !== null)
+  )]
+}
+
+async function fetchInstrumentMetadata(
+  baseUrl: string,
+  createHeaders: () => HeadersInit,
+  instrumentIds: number[]
+) {
+  if (instrumentIds.length === 0) {
+    return [] as EtoroInstrumentLookupItem[]
+  }
+
+  const chunkSize = 25
+  const metadata: EtoroInstrumentLookupItem[] = []
+
+  for (let start = 0; start < instrumentIds.length; start += chunkSize) {
+    const chunk = instrumentIds.slice(start, start + chunkSize)
+    const query = chunk.join(',')
+    const response = await fetchWithRetry(
+      `${baseUrl}/api/v1/market-data/search?instrumentIds=${query}`,
+      createHeaders()
+    )
+    const items = Array.isArray(response.items) ? response.items : []
+
+    metadata.push(
+      ...items.filter(
+        (item): item is EtoroInstrumentLookupItem =>
+          Boolean(item) && typeof item === 'object' && !Array.isArray(item)
+      )
+    )
+  }
+
+  return metadata
+}
+
 export async function fetchEtoroData(configuredMock: boolean): Promise<EtoroResponseBundle> {
   if (shouldUseMock(configuredMock)) {
     const mockResponses = getMockEtoroResponses()
@@ -73,6 +142,7 @@ export async function fetchEtoroData(configuredMock: boolean): Promise<EtoroResp
       usedMock: true,
       identity: mockResponses.identity,
       pnl: mockResponses.pnl,
+      instrumentMetadata: [],
     }
   }
 
@@ -91,10 +161,13 @@ export async function fetchEtoroData(configuredMock: boolean): Promise<EtoroResp
     fetchWithRetry(`${baseUrl}/api/v1/me`, createHeaders()),
     fetchWithRetry(`${baseUrl}/api/v1/trading/info/real/pnl`, createHeaders()),
   ])
+  const instrumentIds = collectInstrumentIds(pnl)
+  const instrumentMetadata = await fetchInstrumentMetadata(baseUrl, createHeaders, instrumentIds)
 
   return {
     usedMock: false,
     identity: identity as EtoroIdentityResponse,
     pnl,
+    instrumentMetadata,
   }
 }

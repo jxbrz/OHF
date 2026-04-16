@@ -18,7 +18,7 @@
     "supabase:functions": "npx supabase functions serve --env-file .env.local",
     "supabase:types": "npx supabase gen types typescript --local > src/types/database.ts",
     "supabase:types:linked": "npx supabase gen types typescript --linked > src/types/database.ts",
-    "supabase:schedule:market-close": "tsx scripts/schedule-market-close-sync.ts",
+    "supabase:schedule:hourly": "tsx scripts/schedule-market-close-sync.ts",
     "import:workbook": "tsx scripts/import-workbook.ts",
     "seed:admin": "tsx scripts/seed-admin.ts"
   },

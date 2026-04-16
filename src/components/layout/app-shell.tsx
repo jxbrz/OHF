@@ -37,8 +37,8 @@ function NavContent({ onNavigate }: { onNavigate?: () => void }) {
             className={cn(
               'group flex items-center gap-3 rounded-xl border px-3 py-2.5 text-sm transition',
               isActive
-                ? 'border-border/80 bg-secondary/90 text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]'
-                : 'border-transparent text-muted-foreground hover:border-border/60 hover:bg-secondary/55 hover:text-foreground'
+                ? 'border-primary/30 bg-primary/14 text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_10px_22px_rgba(9,18,33,0.18)]'
+                : 'border-transparent text-muted-foreground hover:border-border/60 hover:bg-secondary/72 hover:text-foreground'
             )}
             to={item.to}
             onClick={onNavigate}
@@ -46,7 +46,7 @@ function NavContent({ onNavigate }: { onNavigate?: () => void }) {
             <Icon
               className={cn(
                 'size-4 transition-colors',
-                isActive ? 'text-foreground' : 'text-muted-foreground group-hover:text-foreground'
+                isActive ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground'
               )}
             />
             {item.label}
@@ -64,15 +64,10 @@ export function AppShell() {
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto flex min-h-screen max-w-[1600px]">
-        <aside className="hidden w-72 flex-col border-r border-border/70 bg-panel/85 px-5 py-6 backdrop-blur lg:flex">
+        <aside className="hidden w-72 flex-col border-r border-border/70 bg-panel/90 px-5 py-6 shadow-[16px_0_36px_rgba(5,10,22,0.16)] backdrop-blur lg:flex">
           <div className="space-y-1 border-b border-border/70 pb-6">
             <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">OHF</div>
-            <div className="text-xl font-semibold tracking-tight text-foreground">
-              Investment Club
-            </div>
-            <p className="text-sm text-muted-foreground">
-              Internal capital tracking, portfolio sync, and member ownership.
-            </p>
+            <div className="text-xl font-semibold tracking-tight text-foreground">Orchard Hedge Fund</div>
           </div>
           <div className="flex-1 py-6">
             <NavContent />
@@ -91,7 +86,7 @@ export function AppShell() {
           </div>
         </aside>
         <div className="flex min-h-screen flex-1 flex-col">
-          <header className="sticky top-0 z-20 border-b border-border/70 bg-background/90 backdrop-blur">
+          <header className="sticky top-0 z-20 border-b border-border/70 bg-background/88 backdrop-blur">
             <div className="flex items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
               <div className="flex items-center gap-3">
                 <Sheet open={isSheetOpen} onOpenChange={setIsSheetOpen}>
@@ -100,12 +95,10 @@ export function AppShell() {
                       <Menu className="size-4" />
                     </Button>
                   </SheetTrigger>
-                  <SheetContent side="left" className="w-80 bg-panel">
+                  <SheetContent side="left" className="w-80 bg-panel/95">
                     <SheetHeader>
-                      <SheetTitle>OHF Dashboard</SheetTitle>
-                      <SheetDescription>
-                        Navigate the private investment-club workspace.
-                      </SheetDescription>
+                      <SheetTitle>OHF</SheetTitle>
+                      <SheetDescription>Navigate the workspace.</SheetDescription>
                     </SheetHeader>
                     <div className="mt-6">
                       <NavContent onNavigate={() => setIsSheetOpen(false)} />
@@ -113,18 +106,10 @@ export function AppShell() {
                   </SheetContent>
                 </Sheet>
                 <div>
-                  <div className="text-sm font-semibold tracking-tight text-foreground">
-                    Oxford Hedge Fund
-                  </div>
-                  <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                    Private pooled account dashboard
-                  </div>
+                  <div className="text-sm font-semibold tracking-tight text-foreground">Orchard Hedge Fund</div>
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <Badge variant="secondary" className="hidden capitalize sm:inline-flex">
-                  {role ?? 'viewer'}
-                </Badge>
                 <Button className="lg:hidden" size="sm" variant="ghost" onClick={() => void signOut()}>
                   <LogOut className="size-4" />
                   Sign out

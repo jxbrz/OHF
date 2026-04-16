@@ -1,464 +1,286 @@
-import { useState } from 'react'
-import {
-  buildMemberSummaries,
-  calculateCurrentUnitPrice,
-  calculateTotalUnitsOutstanding,
-  filterTransactionsAsOf,
-  resolveSnapshotAsOf,
-  sortTransactionsByDate,
-} from '@shared/calculations'
 import { useQuery } from '@tanstack/react-query'
-import { Activity, AlertTriangle, NotebookTabs } from 'lucide-react'
-import { EmptyState } from '@/components/shared/empty-state'
-import { MetricCard } from '@/components/shared/metric-card'
-import { PageHeader } from '@/components/shared/page-header'
-import { SortableHeader } from '@/components/shared/sortable-header'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Skeleton } from '@/components/ui/skeleton'
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import { TRANSACTION_TYPE_LABELS } from '@/lib/constants'
+  Area,
+  AreaChart,
+  ResponsiveContainer,
+  CartesianGrid,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
+import { ActivitySquare, ArrowDownRight, ArrowUpRight, Wallet } from 'lucide-react'
+import { EmptyState } from '@/components/shared/empty-state'
+import { PnlValue } from '@/components/shared/pnl-value'
 import { fetchClubData } from '@/lib/api'
-import { formatCurrency, formatDate, formatDateTime, formatNumber } from '@/lib/formatters'
-import { sortItems, type SortConfig } from '@/lib/sorting'
-import { getTransferCounterpartyName } from '@/lib/transfers'
+import {
+  formatCurrency,
+  formatCurrencyAxis,
+  formatDateTime,
+  formatSignedCurrency,
+  formatNumber,
+} from '@/lib/formatters'
+import { cn } from '@/lib/utils'
+import type { SnapshotChartPoint } from '@/types/app'
 
-type LedgerSortKey =
-  | 'name'
-  | 'lastActivityAt'
-  | 'netUnits'
-  | 'ownershipPct'
-  | 'totalInvested'
-  | 'totalReturned'
-  | 'remainingCostBasis'
-  | 'currentValue'
-  | 'realizedReturn'
-  | 'unrealizedReturn'
-  | 'totalReturn'
-  | 'openLotCount'
+function getChartDomain(values: number[]) {
+  const numericValues = values.filter((value) => Number.isFinite(value))
 
-function DashboardSkeleton() {
+  if (numericValues.length === 0) {
+    return [0, 1] as const
+  }
+
+  const minValue = Math.min(...numericValues)
+  const maxValue = Math.max(...numericValues)
+  const range = maxValue - minValue
+  const padding = Math.max(range * 0.16, 4)
+
+  if (range === 0) {
+    return [minValue - padding, maxValue + padding] as const
+  }
+
+  return [minValue - padding, maxValue + padding] as const
+}
+
+function getWeeklyPerformance(series: SnapshotChartPoint[]) {
+  if (series.length === 0) {
+    return null
+  }
+
+  const sortedSeries = [...series].sort(
+    (left, right) => new Date(left.capturedAt).getTime() - new Date(right.capturedAt).getTime()
+  )
+  const latestPoint = sortedSeries.at(-1)
+
+  if (!latestPoint) {
+    return null
+  }
+
+  const latestTimestamp = new Date(latestPoint.capturedAt).getTime()
+  const weekAgoTimestamp = latestTimestamp - 7 * 24 * 60 * 60 * 1000
+  const baselinePoint =
+    [...sortedSeries]
+      .reverse()
+      .find((point) => new Date(point.capturedAt).getTime() <= weekAgoTimestamp) ??
+    sortedSeries[0]
+
+  const changeAmount = latestPoint.totalAccountValue - baselinePoint.totalAccountValue
+  const changePct =
+    baselinePoint.totalAccountValue > 0 ? changeAmount / baselinePoint.totalAccountValue : 0
+
+  return {
+    changeAmount,
+    changePct,
+    baselineAt: baselinePoint.capturedAt,
+    latestAt: latestPoint.capturedAt,
+  }
+}
+
+function OverviewSkeleton() {
   return (
-    <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 8 }).map((_, index) => (
-          <Skeleton key={index} className="h-32 rounded-2xl" />
-        ))}
-      </div>
-      <div className="grid gap-6 xl:grid-cols-[1.45fr_0.55fr]">
-        <Skeleton className="h-[34rem] rounded-2xl" />
-        <div className="grid gap-6">
-          <Skeleton className="h-56 rounded-2xl" />
-          <Skeleton className="h-72 rounded-2xl" />
+    <div className="space-y-8">
+      <section className="panel-surface flex min-h-[52vh] items-center justify-center px-6 py-12">
+        <div className="w-full max-w-3xl animate-pulse space-y-4 text-center">
+          <div className="mx-auto h-4 w-24 rounded-full bg-secondary/70" />
+          <div className="mx-auto h-16 w-72 max-w-full rounded-3xl bg-secondary/60" />
+          <div className="mx-auto h-6 w-40 rounded-full bg-secondary/60" />
+          <div className="mx-auto h-3.5 w-48 max-w-full rounded-full bg-secondary/50" />
         </div>
+      </section>
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.95fr)]">
+        <div className="panel-surface h-[24rem] animate-pulse bg-secondary/20" />
+        <div className="panel-surface h-[24rem] animate-pulse bg-secondary/20" />
       </div>
     </div>
   )
 }
 
-function getAsOfCutoff(selectedDate: string) {
-  if (!selectedDate) {
-    return null
-  }
-
-  const value = new Date(`${selectedDate}T23:59:59.999`)
-  return Number.isFinite(value.getTime()) ? value.toISOString() : null
-}
-
 export function DashboardPage() {
-  const [selectedDate, setSelectedDate] = useState('')
-  const [sortConfig, setSortConfig] = useState<SortConfig<LedgerSortKey>>({
-    key: 'currentValue',
-    direction: 'desc',
-  })
   const clubQuery = useQuery({
     queryKey: ['club-data'],
     queryFn: fetchClubData,
   })
 
-  if (clubQuery.isLoading) {
-    return <DashboardSkeleton />
+  if (clubQuery.isPending) {
+    return <OverviewSkeleton />
   }
 
   if (clubQuery.isError) {
     return (
       <EmptyState
-        icon={Activity}
-        title="Unable to load ownership ledger"
-        description={clubQuery.error instanceof Error ? clubQuery.error.message : 'Unknown ownership error.'}
+        icon={ActivitySquare}
+        title="Unable to load the overview"
+        description={clubQuery.error instanceof Error ? clubQuery.error.message : 'Unknown overview error.'}
       />
     )
   }
 
   const data = clubQuery.data
+
   if (!data) {
-    return <DashboardSkeleton />
+    return (
+      <EmptyState
+        icon={Wallet}
+        title="Overview is not available yet"
+        description="Connect the broker sync or capture a manual snapshot to bring the front page to life."
+      />
+    )
   }
 
-  const asOfCutoff = getAsOfCutoff(selectedDate)
-  const scopedTransactions = filterTransactionsAsOf(data.transactions, asOfCutoff)
-  const scopedSnapshot = resolveSnapshotAsOf(data.snapshots, asOfCutoff)
-  const totalUnits = calculateTotalUnitsOutstanding(scopedTransactions)
-  const fundValue = scopedSnapshot
-    ? Number(scopedSnapshot.total_account_value)
-    : Number((totalUnits * data.startingUnitPrice).toFixed(6))
-  const currentUnitPrice = scopedSnapshot
-    ? calculateCurrentUnitPrice(fundValue, totalUnits, data.startingUnitPrice)
-    : calculateCurrentUnitPrice(fundValue, totalUnits, data.startingUnitPrice)
-  const rawMemberSummaries = buildMemberSummaries({
-    members: data.members,
-    transactions: scopedTransactions,
-    currentUnitPrice,
-  })
-  const memberSummaries = sortItems(rawMemberSummaries, sortConfig, {
-    lastActivityAt: (item) => item.lastActivityAt ?? '',
-    netUnits: (item) => item.netUnits,
-    ownershipPct: (item) => item.ownershipPct,
-    totalInvested: (item) => item.totalInvested,
-    totalReturned: (item) => item.totalReturned,
-    remainingCostBasis: (item) => item.remainingCostBasis,
-    currentValue: (item) => item.currentValue,
-    realizedReturn: (item) => item.realizedReturn,
-    unrealizedReturn: (item) => item.unrealizedReturn,
-    totalReturn: (item) => item.totalReturn,
-    openLotCount: (item) => item.openLotCount,
-  })
-  const activeOwners = rawMemberSummaries.filter((member) => member.netUnits > 0)
-  const realizedReturn = rawMemberSummaries.reduce((total, member) => total + member.realizedReturn, 0)
-  const unrealizedReturn = rawMemberSummaries.reduce((total, member) => total + member.unrealizedReturn, 0)
-  const totalInvested = rawMemberSummaries.reduce((total, member) => total + member.totalInvested, 0)
-  const totalReturned = rawMemberSummaries.reduce((total, member) => total + member.totalReturned, 0)
-  const ownershipWarnings = rawMemberSummaries.filter(
-    (member) => member.unmatchedUnitsClosed > 0 || member.netUnits < 0
+  const fundCurrency = data.fundCurrency === 'USD' ? 'USD' : 'GBP'
+  const brokerCurrency = data.brokerCurrency === 'GBP' ? 'GBP' : 'USD'
+  const weeklyPerformance = getWeeklyPerformance(data.snapshotSeries)
+  const latestSnapshotAt = data.latestSnapshot?.captured_at ?? weeklyPerformance?.latestAt ?? null
+  const accountValueDomain = getChartDomain(
+    data.snapshotSeries.map((point) => point.totalAccountValue)
   )
-  const recentTransactions = sortTransactionsByDate(scopedTransactions).slice(-8).reverse()
-  const memberNameById = new Map(data.members.map((member) => [member.id, member.name]))
-
-  const toggleSort = (key: LedgerSortKey) =>
-    setSortConfig((current) => ({
-      key,
-      direction: current.key === key && current.direction === 'desc' ? 'asc' : 'desc',
-    }))
+  const accountValueTooltipFormatter = (value: unknown) =>
+    formatCurrency(Number(Array.isArray(value) ? value[0] : value ?? 0), fundCurrency)
 
   return (
-    <div className="space-y-8">
-      <PageHeader
-        title="Ownership ledger"
-        description={`Track who owns what, how their units were acquired, and how returns are split between realized and unrealized performance. ${
-          asOfCutoff
-            ? `Showing balances as of ${formatDate(asOfCutoff)}.`
-            : data.latestSnapshot
-              ? `Live view anchored to the latest snapshot captured ${formatDateTime(data.latestSnapshot.captured_at)}.`
-              : 'No broker snapshot yet, so the ledger is using the configured starting unit price.'
-        }`}
-        actions={
-          <div className="flex flex-wrap items-end gap-2">
-            <label className="grid gap-2">
-              <span className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                As of date
-              </span>
-              <Input
-                type="date"
-                value={selectedDate}
-                onChange={(event) => setSelectedDate(event.target.value)}
-              />
-            </label>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setSelectedDate('')}
-            >
-              Latest view
-            </Button>
+    <div className="space-y-8 pb-4">
+      <section className="panel-surface relative flex min-h-[52vh] items-center justify-center overflow-hidden px-6 py-12 sm:px-10">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(91,155,235,0.18),transparent_38%),radial-gradient(circle_at_bottom,rgba(49,167,154,0.12),transparent_34%)]" />
+        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent" />
+        <div className="relative z-10 max-w-3xl text-center">
+          <p className="mb-5 text-xs uppercase tracking-[0.18em] text-muted-foreground">
+            Account value
+          </p>
+          <div className="font-mono text-[3.4rem] font-semibold tracking-tight text-foreground sm:text-[4.9rem] lg:text-[6rem]">
+            {formatCurrency(data.dashboardSummary.totalAccountValue, fundCurrency)}
           </div>
-        }
-      />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard
-          label="Fund value"
-          value={formatCurrency(fundValue)}
-          secondary={
-            scopedSnapshot
-              ? `Snapshot ${formatDateTime(scopedSnapshot.captured_at)}`
-              : 'Derived from starting unit price'
-          }
-        />
-        <MetricCard
-          label="Unit price"
-          value={formatCurrency(currentUnitPrice)}
-          secondary={`Units outstanding ${formatNumber(totalUnits, 6)}`}
-        />
-        <MetricCard
-          label="Active owners"
-          value={String(activeOwners.length)}
-          secondary={`${rawMemberSummaries.length} total members on ledger`}
-        />
-        <MetricCard
-          label="Open lots"
-          value={String(rawMemberSummaries.reduce((total, member) => total + member.openLotCount, 0))}
-          secondary="FIFO lots still held across all members"
-        />
-        <MetricCard
-          label="Total invested"
-          value={formatCurrency(totalInvested)}
-          secondary={`Cash returned ${formatCurrency(totalReturned)}`}
-        />
-        <MetricCard
-          label="Realized return"
-          tone={realizedReturn >= 0 ? 'positive' : 'negative'}
-          value={formatCurrency(realizedReturn)}
-          secondary="Closed lots and cash-only adjustments"
-        />
-        <MetricCard
-          label="Unrealized return"
-          tone={unrealizedReturn >= 0 ? 'positive' : 'negative'}
-          value={formatCurrency(unrealizedReturn)}
-          secondary="Current value minus remaining cost basis"
-        />
-        <MetricCard
-          label="Ledger warnings"
-          tone={ownershipWarnings.length > 0 ? 'negative' : 'neutral'}
-          value={String(ownershipWarnings.length)}
-          secondary={
-            ownershipWarnings.length > 0
-              ? 'Members need ledger review'
-              : 'No oversold or unmatched lot issues'
-          }
-        />
-      </div>
-      {memberSummaries.length === 0 ? (
-        <EmptyState
-          icon={NotebookTabs}
-          title="No ownership data"
-          description="Create members and transactions first so the ledger can build ownership and return positions."
-        />
-      ) : (
-        <div className="grid gap-6 xl:grid-cols-[1.45fr_0.55fr]">
-          <div className="panel-surface overflow-x-auto">
-            <div className="border-b border-border/70 px-5 py-4">
-              <h2 className="text-lg font-semibold">Member ownership register</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                FIFO lot accounting, current holdings, and return attribution per member.
+          <div className="mt-4 flex items-center justify-center">
+            {weeklyPerformance ? (
+              <p
+                className={cn(
+                  'inline-flex items-center gap-2 text-sm',
+                  weeklyPerformance.changeAmount > 0
+                    ? 'text-gain'
+                    : weeklyPerformance.changeAmount < 0
+                      ? 'text-loss'
+                      : 'text-muted-foreground'
+                )}
+              >
+                {weeklyPerformance.changeAmount > 0 ? (
+                  <ArrowUpRight className="size-3.5" />
+                ) : weeklyPerformance.changeAmount < 0 ? (
+                  <ArrowDownRight className="size-3.5" />
+                ) : (
+                  <ActivitySquare className="size-3.5" />
+                )}
+                <span>{formatSignedCurrency(weeklyPerformance.changeAmount, fundCurrency)} this week</span>
               </p>
-            </div>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>
-                    <SortableHeader
-                      active={sortConfig.key === 'name'}
-                      direction={sortConfig.direction}
-                      label="Member"
-                      onClick={() => toggleSort('name')}
-                    />
-                  </TableHead>
-                  <TableHead>
-                    <SortableHeader
-                      active={sortConfig.key === 'lastActivityAt'}
-                      direction={sortConfig.direction}
-                      label="Last activity"
-                      onClick={() => toggleSort('lastActivityAt')}
-                    />
-                  </TableHead>
-                  <TableHead>
-                    <SortableHeader
-                      active={sortConfig.key === 'netUnits'}
-                      direction={sortConfig.direction}
-                      label="Net units"
-                      onClick={() => toggleSort('netUnits')}
-                    />
-                  </TableHead>
-                  <TableHead>
-                    <SortableHeader
-                      active={sortConfig.key === 'ownershipPct'}
-                      direction={sortConfig.direction}
-                      label="Ownership"
-                      onClick={() => toggleSort('ownershipPct')}
-                    />
-                  </TableHead>
-                  <TableHead>
-                    <SortableHeader
-                      active={sortConfig.key === 'totalInvested'}
-                      direction={sortConfig.direction}
-                      label="Invested"
-                      onClick={() => toggleSort('totalInvested')}
-                    />
-                  </TableHead>
-                  <TableHead>
-                    <SortableHeader
-                      active={sortConfig.key === 'totalReturned'}
-                      direction={sortConfig.direction}
-                      label="Returned"
-                      onClick={() => toggleSort('totalReturned')}
-                    />
-                  </TableHead>
-                  <TableHead>
-                    <SortableHeader
-                      active={sortConfig.key === 'remainingCostBasis'}
-                      direction={sortConfig.direction}
-                      label="Cost basis"
-                      onClick={() => toggleSort('remainingCostBasis')}
-                    />
-                  </TableHead>
-                  <TableHead>
-                    <SortableHeader
-                      active={sortConfig.key === 'currentValue'}
-                      direction={sortConfig.direction}
-                      label="Current value"
-                      onClick={() => toggleSort('currentValue')}
-                    />
-                  </TableHead>
-                  <TableHead>
-                    <SortableHeader
-                      active={sortConfig.key === 'realizedReturn'}
-                      direction={sortConfig.direction}
-                      label="Realized"
-                      onClick={() => toggleSort('realizedReturn')}
-                    />
-                  </TableHead>
-                  <TableHead>
-                    <SortableHeader
-                      active={sortConfig.key === 'unrealizedReturn'}
-                      direction={sortConfig.direction}
-                      label="Unrealized"
-                      onClick={() => toggleSort('unrealizedReturn')}
-                    />
-                  </TableHead>
-                  <TableHead>
-                    <SortableHeader
-                      active={sortConfig.key === 'totalReturn'}
-                      direction={sortConfig.direction}
-                      label="Total return"
-                      onClick={() => toggleSort('totalReturn')}
-                    />
-                  </TableHead>
-                  <TableHead>
-                    <SortableHeader
-                      active={sortConfig.key === 'openLotCount'}
-                      direction={sortConfig.direction}
-                      label="Lots"
-                      onClick={() => toggleSort('openLotCount')}
-                    />
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {memberSummaries.map((member) => (
-                  <TableRow key={member.id}>
-                    <TableCell>
-                      <div className="font-medium text-foreground">{member.name}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {member.isActive ? 'Active member' : 'Inactive member'}
-                      </div>
-                    </TableCell>
-                    <TableCell>{formatDateTime(member.lastActivityAt)}</TableCell>
-                    <TableCell>{formatNumber(member.netUnits, 6)}</TableCell>
-                    <TableCell>{(member.ownershipPct * 100).toFixed(2)}%</TableCell>
-                    <TableCell>{formatCurrency(member.totalInvested)}</TableCell>
-                    <TableCell>{formatCurrency(member.totalReturned)}</TableCell>
-                    <TableCell>{formatCurrency(member.remainingCostBasis)}</TableCell>
-                    <TableCell>{formatCurrency(member.currentValue)}</TableCell>
-                    <TableCell className={member.realizedReturn >= 0 ? 'text-gain' : 'text-loss'}>
-                      {formatCurrency(member.realizedReturn)}
-                    </TableCell>
-                    <TableCell className={member.unrealizedReturn >= 0 ? 'text-gain' : 'text-loss'}>
-                      {formatCurrency(member.unrealizedReturn)}
-                    </TableCell>
-                    <TableCell className={member.totalReturn >= 0 ? 'text-gain' : 'text-loss'}>
-                      {formatCurrency(member.totalReturn)}
-                    </TableCell>
-                    <TableCell>
-                      <div>{member.openLotCount}</div>
-                      <div className="text-xs text-muted-foreground">
-                        Avg {formatCurrency(member.averageCostPerUnit)}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-          <div className="grid gap-6">
-            <div className="panel-surface p-5">
-              <div className="mb-4 flex items-center gap-2">
-                <AlertTriangle className="size-4 text-amber-400" />
-                <h2 className="text-lg font-semibold">Ledger checks</h2>
-              </div>
-              {ownershipWarnings.length > 0 ? (
-                <div className="space-y-3">
-                  {ownershipWarnings.map((member) => (
-                    <div
-                      key={member.id}
-                      className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3"
-                    >
-                      <div className="font-medium text-foreground">{member.name}</div>
-                      <div className="mt-1 text-sm text-muted-foreground">
-                        {member.netUnits < 0
-                          ? 'Negative net units detected.'
-                          : `${formatNumber(member.unmatchedUnitsClosed, 6)} units were closed without enough open lots.`}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  No ownership warnings in the current view. FIFO lots reconcile cleanly against the ledger.
-                </p>
-              )}
-            </div>
-            <div className="panel-surface p-5">
-              <h2 className="text-lg font-semibold">Recent capital events</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Latest ledger activity included in the current as-of view.
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Waiting for enough history to show weekly movement
               </p>
-              {recentTransactions.length > 0 ? (
-                <div className="mt-4 space-y-3">
-                  {recentTransactions.map((transaction) => (
-                    <div
-                      key={transaction.id}
-                      className="rounded-xl border border-border/70 bg-card/65 p-3"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="font-medium text-foreground">
-                            {memberNameById.get(transaction.member_id) ?? 'Unknown member'}
-                          </div>
-                          <div className="mt-1 text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                            {TRANSACTION_TYPE_LABELS[transaction.type] ?? transaction.type}
-                            {transaction.counterparty_member_id
-                              ? ` with ${getTransferCounterpartyName(transaction, memberNameById)}`
-                              : ''}
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <div className="font-medium text-foreground">{formatCurrency(transaction.amount)}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {formatNumber(transaction.units_amount, 6)} units
-                          </div>
-                        </div>
-                      </div>
-                      <div className="mt-2 text-xs text-muted-foreground">
-                        {formatDateTime(transaction.date)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="mt-4 text-sm text-muted-foreground">
-                  No transactions fall inside the selected as-of window.
-                </p>
-              )}
-            </div>
+            )}
           </div>
+          <p className="mt-4 text-sm text-muted-foreground">
+            {latestSnapshotAt ? `Last sync ${formatDateTime(latestSnapshotAt)}` : 'No snapshot yet'}
+          </p>
         </div>
-      )}
+      </section>
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.95fr)]">
+        <section className="panel-surface p-5 sm:p-6">
+          <div className="mb-5">
+            <h2 className="text-lg font-semibold tracking-tight text-foreground">Equity curve</h2>
+          </div>
+          {data.snapshotSeries.length === 0 ? (
+            <EmptyState
+              icon={ActivitySquare}
+              title="No curve yet"
+              description="Capture a few snapshots and this page will start telling the story properly."
+            />
+          ) : (
+            <div className="h-[26rem]">
+              <ResponsiveContainer>
+                <AreaChart data={data.snapshotSeries}>
+                  <defs>
+                    <linearGradient id="overview-equity-fill" x1="0" x2="0" y1="0" y2="1">
+                      <stop offset="0%" stopColor="rgba(94, 171, 255, 0.42)" />
+                      <stop offset="100%" stopColor="rgba(94, 171, 255, 0.04)" />
+                    </linearGradient>
+                  </defs>
+                  <XAxis
+                    dataKey="capturedAt"
+                    tickFormatter={(value) =>
+                      new Date(value).toLocaleDateString('en-GB', {
+                        month: 'short',
+                        day: 'numeric',
+                      })
+                    }
+                    tickLine={false}
+                    axisLine={false}
+                    dy={8}
+                  />
+                  <CartesianGrid vertical={false} stroke="rgba(137, 176, 214, 0.08)" />
+                  <YAxis
+                    domain={accountValueDomain}
+                    tickFormatter={(value) => formatCurrencyAxis(Number(value), fundCurrency, 0)}
+                    width={78}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <Tooltip
+                    formatter={accountValueTooltipFormatter}
+                    labelFormatter={(value) => formatDateTime(String(value))}
+                    contentStyle={{
+                      background: 'rgba(20, 28, 45, 0.96)',
+                      border: '1px solid rgba(137, 176, 214, 0.18)',
+                      borderRadius: '16px',
+                    }}
+                  />
+                  <Area
+                    dataKey="totalAccountValue"
+                    type="monotone"
+                    stroke="#5b9beb"
+                    strokeWidth={2.5}
+                    fill="url(#overview-equity-fill)"
+                    dot={false}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </section>
+
+        <section className="panel-surface p-5 sm:p-6">
+          <div className="mb-5">
+            <h2 className="text-lg font-semibold tracking-tight text-foreground">Current trades</h2>
+          </div>
+          {data.holdingsRows.length === 0 ? (
+            <EmptyState
+              icon={Wallet}
+              title="No positions yet"
+              description="Run the broker sync to pull the current holdings into the app."
+            />
+          ) : (
+            <div className="space-y-1">
+              {data.holdingsRows.map((holding) => (
+                <article
+                  key={holding.id}
+                  className="flex items-center justify-between gap-4 border-b border-border/60 py-3 last:border-b-0"
+                >
+                  <div className="min-w-0">
+                    <p className="font-medium text-foreground">{holding.symbol}</p>
+                    <p className="truncate text-sm text-muted-foreground">{holding.instrumentName}</p>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-mono text-sm font-semibold text-foreground">
+                      {formatCurrency(holding.marketValue, fundCurrency)}
+                    </div>
+                    <div className="flex items-center justify-end gap-3 text-xs text-muted-foreground">
+                      <span>{formatNumber(holding.quantity, 2)} @ {formatCurrency(holding.currentPrice, brokerCurrency)}</span>
+                      <PnlValue value={holding.pnl} className="font-medium" currency={fundCurrency} />
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
     </div>
   )
 }

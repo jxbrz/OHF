@@ -9,6 +9,8 @@ const queryClient = new QueryClient({
     queries: {
       staleTime: 30_000,
       refetchOnWindowFocus: false,
+      refetchInterval: 60 * 60 * 1000,
+      refetchIntervalInBackground: true,
     },
   },
 })

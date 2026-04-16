@@ -38,6 +38,7 @@ export interface PortfolioSnapshotLike {
   realized_pnl: NumericLike
   total_units: NumericLike
   unit_price: NumericLike
+  raw_json?: unknown
 }
 
 export interface HoldingSnapshotLike {
@@ -105,14 +106,11 @@ export interface MemberSummaryRow extends MemberUnitsSummary {
   isActive: boolean
   ownershipPct: number
   currentValue: number
-  deposits: number
-  withdrawals: number
-  transferInAmount: number
-  transferOutAmount: number
+  fundDeposits: number
+  fundWithdrawals: number
+  secondaryPurchaseCost: number
+  secondarySaleProceeds: number
   manualAdjustments: number
-  totalInvested: number
-  totalReturned: number
-  netInvested: number
   realizedReturn: number
   unrealizedReturn: number
   remainingCostBasis: number
@@ -121,7 +119,6 @@ export interface MemberSummaryRow extends MemberUnitsSummary {
   unmatchedUnitsClosed: number
   lastActivityAt: string | null
   totalReturn: number
-  netPnl: number
 }
 
 export interface MemberReconciliationTargetLike {
@@ -172,6 +169,8 @@ export interface DashboardSummary {
   totalUnits: number
   currentUnitPrice: number
   overallPerformancePct: number
+  performanceBaselineUnitPrice: number | null
+  performanceBaselineCapturedAt: string | null
   unrealizedPnl: number
   realizedPnl: number
   activeHoldingsCount: number
@@ -181,6 +180,14 @@ export interface DashboardSummary {
 export interface SnapshotChartPoint {
   capturedAt: string
   totalAccountValue: number
+  unitPrice: number
+}
+
+export interface MemberHistoryPoint {
+  capturedAt: string
+  units: number
+  currentValue: number
+  ownershipPct: number
   unitPrice: number
 }
 
@@ -204,9 +211,11 @@ export interface HoldingRow {
 export interface DashboardComputationInput {
   members: MemberLike[]
   transactions: FundTransactionLike[]
+  snapshots?: PortfolioSnapshotLike[]
   latestSnapshot: PortfolioSnapshotLike | null
   latestHoldings: HoldingSnapshotLike[]
   startingUnitPrice?: NumericLike
+  performanceBaselineAt?: string | null
 }
 
 export const DEFAULT_STARTING_UNIT_PRICE = 1
@@ -310,13 +319,16 @@ export function getSignedUnits(transaction: FundTransactionLike): number {
 export function getSignedCashFlow(transaction: FundTransactionLike): number {
   const amount = toNumber(transaction.amount)
 
+  // External fund cash only. Secondary member-to-member trades do not move cash
+  // into or out of the club itself, so they are excluded here.
   switch (transaction.type) {
     case 'DEPOSIT':
-    case 'TRANSFER_IN':
-      return -Math.abs(amount)
-    case 'WITHDRAWAL':
-    case 'TRANSFER_OUT':
       return Math.abs(amount)
+    case 'WITHDRAWAL':
+      return -Math.abs(amount)
+    case 'TRANSFER_IN':
+    case 'TRANSFER_OUT':
+      return 0
     case 'FEE':
       return -Math.abs(amount)
     case 'MANUAL_ADJUSTMENT':
@@ -505,6 +517,8 @@ export function buildMemberLotSummary(args: {
     const isNegativeManualAdjustment = transaction.type === 'MANUAL_ADJUSTMENT' && units < 0
 
     if (isOpeningLotTransaction(transaction)) {
+      // Deposits, transfer-ins, and positive adjustments create fresh basis lots
+      // at the price actually paid or assigned on that ledger row.
       const originalUnits = Math.abs(units)
       const originalAmount = round(resolveOpeningLotAmount(transaction), 6)
       const costPerUnit =
@@ -530,6 +544,8 @@ export function buildMemberLotSummary(args: {
       transaction.type === 'FEE' ||
       isClosingLotTransaction(transaction)
     ) {
+      // Exits consume lots FIFO. Private sales realize gain/loss for the seller
+      // at the negotiated transfer price rather than the current fund NAV.
       const totalUnitsToClose = round(Math.abs(units), 8)
       const totalProceeds = round(resolveClosingLotProceeds(transaction), 6)
       let remainingUnitsToClose = totalUnitsToClose
@@ -636,24 +652,22 @@ export function buildMemberSummaries(args: {
         transactions: memberTransactions,
         currentUnitPrice,
       })
-      const deposits = memberTransactions
+      const fundDeposits = memberTransactions
         .filter((transaction) => transaction.type === 'DEPOSIT')
         .reduce((total, transaction) => total + Math.abs(toNumber(transaction.amount)), 0)
-      const withdrawals = memberTransactions
+      const fundWithdrawals = memberTransactions
         .filter((transaction) => transaction.type === 'WITHDRAWAL')
         .reduce((total, transaction) => total + Math.abs(toNumber(transaction.amount)), 0)
-      const transferInAmount = memberTransactions
+      const secondaryPurchaseCost = memberTransactions
         .filter((transaction) => transaction.type === 'TRANSFER_IN')
         .reduce((total, transaction) => total + Math.abs(toNumber(transaction.amount)), 0)
-      const transferOutAmount = memberTransactions
+      const secondarySaleProceeds = memberTransactions
         .filter((transaction) => transaction.type === 'TRANSFER_OUT')
         .reduce((total, transaction) => total + Math.abs(toNumber(transaction.amount)), 0)
       const manualAdjustments = memberTransactions
         .filter((transaction) => transaction.type === 'MANUAL_ADJUSTMENT')
         .reduce((total, transaction) => total + toNumber(transaction.amount), 0)
       const currentValue = calculateMemberCurrentValue(units.netUnits, currentUnitPrice)
-      const totalInvested = deposits + transferInAmount
-      const totalReturned = withdrawals + transferOutAmount
 
       return {
         id: member.id,
@@ -666,14 +680,11 @@ export function buildMemberSummaries(args: {
         netUnits: round(units.netUnits, 8),
         ownershipPct: calculateOwnershipPercentage(units.netUnits, totalUnits),
         currentValue,
-        deposits: round(deposits, 6),
-        withdrawals: round(withdrawals, 6),
-        transferInAmount: round(transferInAmount, 6),
-        transferOutAmount: round(transferOutAmount, 6),
+        fundDeposits: round(fundDeposits, 6),
+        fundWithdrawals: round(fundWithdrawals, 6),
+        secondaryPurchaseCost: round(secondaryPurchaseCost, 6),
+        secondarySaleProceeds: round(secondarySaleProceeds, 6),
         manualAdjustments: round(manualAdjustments, 6),
-        totalInvested: round(totalInvested, 6),
-        totalReturned: round(totalReturned, 6),
-        netInvested: round(totalInvested - totalReturned, 6),
         realizedReturn: lotSummary.realizedReturn,
         unrealizedReturn: lotSummary.unrealizedReturn,
         remainingCostBasis: lotSummary.remainingCostBasis,
@@ -682,7 +693,6 @@ export function buildMemberSummaries(args: {
         unmatchedUnitsClosed: lotSummary.unmatchedUnitsClosed,
         lastActivityAt: lotSummary.lastActivityAt,
         totalReturn: lotSummary.totalReturn,
-        netPnl: lotSummary.totalReturn,
       }
     })
     .sort((left, right) => right.currentValue - left.currentValue || left.name.localeCompare(right.name))
@@ -712,6 +722,87 @@ export function buildSnapshotSeries(snapshots: PortfolioSnapshotLike[]): Snapsho
       totalAccountValue: round(toNumber(snapshot.total_account_value), 6),
       unitPrice: round(toNumber(snapshot.unit_price), 8),
     }))
+}
+
+export function buildMemberHistorySeries(args: {
+  memberId: string
+  transactions: FundTransactionLike[]
+  snapshots: PortfolioSnapshotLike[]
+}): MemberHistoryPoint[] {
+  const sortedSnapshots = [...args.snapshots].sort(
+    (left, right) => new Date(left.captured_at).getTime() - new Date(right.captured_at).getTime()
+  )
+
+  return sortedSnapshots.map((snapshot) => {
+    const units = calculateMemberUnitsAsOf(args.transactions, args.memberId, snapshot.captured_at)
+    const unitPrice = round(toNumber(snapshot.unit_price), 8)
+    const currentValue = calculateMemberCurrentValue(units, unitPrice)
+    const ownershipPct = calculateOwnershipPercentage(units, snapshot.total_units)
+
+    return {
+      capturedAt: snapshot.captured_at,
+      units,
+      currentValue,
+      ownershipPct,
+      unitPrice,
+    }
+  })
+}
+
+export function filterSnapshotsFromDate<T extends PortfolioSnapshotLike>(
+  snapshots: T[],
+  fromDate?: string | null
+): T[] {
+  if (!fromDate) {
+    return [...snapshots]
+  }
+
+  const fromTimestamp = new Date(fromDate).getTime()
+  if (!Number.isFinite(fromTimestamp)) {
+    return [...snapshots]
+  }
+
+  return snapshots.filter((snapshot) => new Date(snapshot.captured_at).getTime() >= fromTimestamp)
+}
+
+function isScheduledSnapshot(snapshot: PortfolioSnapshotLike) {
+  const rawJson = snapshot.raw_json
+
+  return Boolean(
+    rawJson &&
+      typeof rawJson === 'object' &&
+      !Array.isArray(rawJson) &&
+      'scheduler' in rawJson &&
+      rawJson.scheduler &&
+      typeof rawJson.scheduler === 'object'
+  )
+}
+
+export function resolvePerformanceBaselineSnapshot(args: {
+  snapshots: PortfolioSnapshotLike[]
+  performanceBaselineAt?: string | null
+}): PortfolioSnapshotLike | null {
+  const sortedSnapshots = [...args.snapshots].sort(
+    (left, right) => new Date(left.captured_at).getTime() - new Date(right.captured_at).getTime()
+  )
+
+  if (sortedSnapshots.length === 0) {
+    return null
+  }
+
+  if (args.performanceBaselineAt) {
+    const baselineTimestamp = new Date(args.performanceBaselineAt).getTime()
+
+    if (Number.isFinite(baselineTimestamp)) {
+      return (
+        sortedSnapshots.find((snapshot) => new Date(snapshot.captured_at).getTime() >= baselineTimestamp) ??
+        sortedSnapshots.at(-1) ??
+        null
+      )
+    }
+  }
+
+  return sortedSnapshots.find((snapshot) => isScheduledSnapshot(snapshot)) ?? sortedSnapshots[0] ?? null
 }
 
 export function buildOwnershipAllocation(memberSummaries: MemberSummaryRow[]): AllocationPoint[] {
@@ -879,9 +970,11 @@ export function buildReconciliationTransferSuggestions(args: {
 export function computeDashboardSummary({
   members,
   transactions,
+  snapshots,
   latestSnapshot,
   latestHoldings,
   startingUnitPrice,
+  performanceBaselineAt,
 }: DashboardComputationInput): DashboardSummary {
   const totalUnits = calculateTotalUnitsOutstanding(transactions)
   const totalAccountValue = latestSnapshot ? toNumber(latestSnapshot.total_account_value) : 0
@@ -889,6 +982,16 @@ export function computeDashboardSummary({
     ? calculateCurrentUnitPrice(totalAccountValue, totalUnits, startingUnitPrice)
     : getStartingUnitPrice(startingUnitPrice)
   const resolvedStartingUnitPrice = getStartingUnitPrice(startingUnitPrice)
+  const performanceBaselineSnapshot = resolvePerformanceBaselineSnapshot({
+    snapshots: snapshots ?? (latestSnapshot ? [latestSnapshot] : []),
+    performanceBaselineAt,
+  })
+  const performanceBaselineUnitPrice = performanceBaselineSnapshot
+    ? round(toNumber(performanceBaselineSnapshot.unit_price), 8)
+    : null
+  const performanceBaseline = performanceBaselineUnitPrice && performanceBaselineUnitPrice > 0
+    ? performanceBaselineUnitPrice
+    : resolvedStartingUnitPrice
 
   return {
     totalAccountValue: round(totalAccountValue, 6),
@@ -896,9 +999,11 @@ export function computeDashboardSummary({
     totalUnits,
     currentUnitPrice,
     overallPerformancePct:
-      resolvedStartingUnitPrice > 0
-        ? round(currentUnitPrice / resolvedStartingUnitPrice - 1, 6)
+      performanceBaseline > 0
+        ? round(currentUnitPrice / performanceBaseline - 1, 6)
         : 0,
+    performanceBaselineUnitPrice,
+    performanceBaselineCapturedAt: performanceBaselineSnapshot?.captured_at ?? null,
     unrealizedPnl: round(latestSnapshot ? toNumber(latestSnapshot.unrealized_pnl) : 0, 6),
     realizedPnl: round(latestSnapshot ? toNumber(latestSnapshot.realized_pnl) : 0, 6),
     activeHoldingsCount: latestHoldings.filter((holding) => toNumber(holding.market_value) > 0).length,

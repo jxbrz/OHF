@@ -7,6 +7,7 @@ import {
   buildOwnershipAllocation,
   buildSnapshotSeries,
   computeDashboardSummary,
+  filterSnapshotsFromDate,
   summarizeMemberReconciliation,
 } from '@shared/calculations'
 import { getSupabaseClient } from '@/lib/supabase'
@@ -90,6 +91,15 @@ export function readOptionalSettingNumber(settings: Tables<'app_settings'>[], ke
   const row = settings.find((setting) => setting.key === key)
   const value = unwrapSettingValue<number | null>(row?.value)
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+export function readOptionalSettingString(
+  settings: Tables<'app_settings'>[],
+  key: string
+) {
+  const row = settings.find((setting) => setting.key === key)
+  const value = unwrapSettingValue<string | null>(row?.value)
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null
 }
 
 function toSettingsMap(settings: Tables<'app_settings'>[]) {
@@ -195,29 +205,37 @@ export async function fetchClubData(): Promise<ClubData> {
   const fundCurrency = readSettingString(settingsRows, 'fund_base_currency', 'GBP')
   const brokerCurrency = readSettingString(settingsRows, 'broker_account_currency', 'USD')
   const brokerToFundFxRate = readOptionalSettingNumber(settingsRows, 'broker_to_fund_fx_rate')
+  const performanceBaselineAt = readOptionalSettingString(settingsRows, 'performance_baseline_at')
   const memberSummaries = buildMemberSummaries({
     members,
     transactions,
     currentUnitPrice: latestSnapshot?.unit_price ?? startingUnitPrice,
   })
-
-  return {
+  const dashboardSummary = computeDashboardSummary({
     members,
     transactions,
     snapshots,
     latestSnapshot,
     latestHoldings,
+    startingUnitPrice,
+    performanceBaselineAt,
+  })
+  const visibleSnapshots = filterSnapshotsFromDate(
+    snapshots,
+    dashboardSummary.performanceBaselineCapturedAt
+  )
+
+  return {
+    members,
+    transactions,
+    snapshots: visibleSnapshots,
+    latestSnapshot,
+    latestHoldings,
     settingsRows,
     settingsMap: toSettingsMap(settingsRows),
     memberSummaries,
-    dashboardSummary: computeDashboardSummary({
-      members,
-      transactions,
-      latestSnapshot,
-      latestHoldings,
-      startingUnitPrice,
-    }),
-    snapshotSeries: buildSnapshotSeries(snapshots),
+    dashboardSummary,
+    snapshotSeries: buildSnapshotSeries(visibleSnapshots),
     holdingsRows: buildHoldingsRows(latestHoldings),
     ownershipAllocation: buildOwnershipAllocation(memberSummaries),
     holdingsAllocation: buildHoldingsAllocation(latestHoldings),

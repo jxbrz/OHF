@@ -15,15 +15,12 @@ import {
 } from '@/components/ui/table'
 import { MemberDetailDialog } from '@/features/members/member-detail-dialog'
 import { fetchClubData } from '@/lib/api'
-import { formatCurrency, formatNumber } from '@/lib/formatters'
+import { formatCurrency, formatDateTime, formatNumber } from '@/lib/formatters'
 import { sortItems, type SortConfig } from '@/lib/sorting'
 import type { MemberSummaryRow } from '@/types/app'
 
 type MembersSortKey =
   | 'name'
-  | 'totalInvested'
-  | 'totalReturned'
-  | 'remainingCostBasis'
   | 'netUnits'
   | 'ownershipPct'
   | 'currentValue'
@@ -31,7 +28,7 @@ type MembersSortKey =
 
 export function MembersPage() {
   const [sortConfig, setSortConfig] = useState<SortConfig<MembersSortKey>>({
-    key: 'totalReturn',
+    key: 'currentValue',
     direction: 'desc',
   })
   const [selectedMember, setSelectedMember] = useState<MemberSummaryRow | null>(null)
@@ -53,9 +50,6 @@ export function MembersPage() {
   const data = clubQuery.data
   const members = data
     ? sortItems(data.memberSummaries, sortConfig, {
-        totalInvested: (item) => item.totalInvested,
-        totalReturned: (item) => item.totalReturned,
-        remainingCostBasis: (item) => item.remainingCostBasis,
         netUnits: (item) => item.netUnits,
         ownershipPct: (item) => item.ownershipPct,
         currentValue: (item) => item.currentValue,
@@ -73,7 +67,7 @@ export function MembersPage() {
     <div className="space-y-8">
       <PageHeader
         title="Members"
-        description="Member capital accounts, ownership, remaining cost basis, and total return with FIFO lot support behind the scenes."
+        description="The main list focuses on ownership only: who holds units, what share of the fund they own, what it is worth, and how they are doing. Cash-flow and ledger detail live inside each member view."
       />
       {!data || members.length === 0 ? (
         <EmptyState
@@ -95,36 +89,11 @@ export function MembersPage() {
                       onClick={() => toggleSort('name')}
                     />
                   </TableHead>
-                  <TableHead className="text-right">Units bought</TableHead>
-                  <TableHead>
-                    <SortableHeader
-                      active={sortConfig.key === 'totalInvested'}
-                      direction={sortConfig.direction}
-                      label="Cash paid in"
-                      onClick={() => toggleSort('totalInvested')}
-                    />
-                  </TableHead>
-                  <TableHead>
-                    <SortableHeader
-                      active={sortConfig.key === 'totalReturned'}
-                      direction={sortConfig.direction}
-                      label="Cash received"
-                      onClick={() => toggleSort('totalReturned')}
-                    />
-                  </TableHead>
-                  <TableHead>
-                    <SortableHeader
-                      active={sortConfig.key === 'remainingCostBasis'}
-                      direction={sortConfig.direction}
-                      label="Remaining cost basis"
-                      onClick={() => toggleSort('remainingCostBasis')}
-                    />
-                  </TableHead>
                   <TableHead>
                     <SortableHeader
                       active={sortConfig.key === 'netUnits'}
                       direction={sortConfig.direction}
-                      label="Net units"
+                      label="Units"
                       onClick={() => toggleSort('netUnits')}
                     />
                   </TableHead>
@@ -152,36 +121,30 @@ export function MembersPage() {
                       onClick={() => toggleSort('totalReturn')}
                     />
                   </TableHead>
-                  <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {members.map((member) => (
                   <TableRow key={member.id}>
                     <TableCell>
-                      <div className="font-medium text-foreground">{member.name}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {member.isActive ? 'Active member' : 'Inactive member'}
-                      </div>
+                      <button
+                        className="font-medium text-foreground underline-offset-4 hover:underline"
+                        onClick={() => setSelectedMember(member)}
+                        type="button"
+                      >
+                        {member.name}
+                      </button>
+                      {member.lastActivityAt ? (
+                        <div className="text-xs text-muted-foreground">
+                          Last activity {formatDateTime(member.lastActivityAt)}
+                        </div>
+                      ) : null}
                     </TableCell>
-                    <TableCell className="text-right">{formatNumber(member.unitsBought, 6)}</TableCell>
-                    <TableCell>{formatCurrency(member.totalInvested)}</TableCell>
-                    <TableCell>{formatCurrency(member.totalReturned)}</TableCell>
-                    <TableCell>{formatCurrency(member.remainingCostBasis)}</TableCell>
                     <TableCell>{formatNumber(member.netUnits, 6)}</TableCell>
                     <TableCell>{(member.ownershipPct * 100).toFixed(2)}%</TableCell>
                     <TableCell>{formatCurrency(member.currentValue)}</TableCell>
                     <TableCell>
                       <PnlValue value={member.totalReturn} />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <button
-                        className="text-sm font-medium text-foreground underline-offset-4 hover:underline"
-                        onClick={() => setSelectedMember(member)}
-                        type="button"
-                      >
-                        Drill down
-                      </button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -191,8 +154,9 @@ export function MembersPage() {
           <MemberDetailDialog
             member={selectedMember}
             members={data.members}
-            currentUnitPrice={data.latestSnapshot?.unit_price ?? data.startingUnitPrice}
             open={Boolean(selectedMember)}
+            fundCurrency={data.fundCurrency === 'USD' ? 'USD' : 'GBP'}
+            snapshots={data.snapshots}
             transactions={data.transactions}
             onOpenChange={(open) => {
               if (!open) {

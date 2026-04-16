@@ -5,6 +5,7 @@ export type {
   DashboardSummary,
   FundTransactionLike,
   FundTransactionType,
+  MemberHistoryPoint,
   MemberLotDisposition,
   MemberReconciliationRow,
   MemberReconciliationTargetLike,

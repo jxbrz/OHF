@@ -16,7 +16,7 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { to: '/', label: 'Ownership', icon: LayoutDashboard },
+  { to: '/', label: 'Overview', icon: LayoutDashboard },
   { to: '/holdings', label: 'Holdings', icon: CandlestickChart },
   { to: '/members', label: 'Members', icon: Users },
   { to: '/transactions', label: 'Transactions', icon: Coins },

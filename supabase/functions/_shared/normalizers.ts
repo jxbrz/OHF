@@ -48,6 +48,15 @@ interface FxContext {
   referenceDate: string | null
 }
 
+interface InstrumentMetadata {
+  internalInstrumentId?: number
+  internalSymbolFull?: string
+  internalInstrumentDisplayName?: string
+  logo35x35?: string
+  logo50x50?: string
+  logo150x150?: string
+}
+
 export interface NormalizedHolding {
   symbol: string
   instrument_name: string | null
@@ -92,9 +101,26 @@ function convertBrokerAmount(value: number, fxContext: FxContext) {
   return round(value * fxContext.rate)
 }
 
-function normalizePositions(positions: RawPosition[], fxContext: FxContext): NormalizedHolding[] {
+function buildInstrumentMetadataMap(metadata: InstrumentMetadata[]) {
+  return new Map(
+    metadata
+      .filter(
+        (item) =>
+          typeof item.internalInstrumentId === 'number' &&
+          Number.isFinite(item.internalInstrumentId)
+      )
+      .map((item) => [item.internalInstrumentId!, item] as const)
+  )
+}
+
+function normalizePositions(
+  positions: RawPosition[],
+  fxContext: FxContext,
+  instrumentMetadataMap: Map<number, InstrumentMetadata>
+): NormalizedHolding[] {
   return positions.map((position) => {
     const instrumentId = position.instrumentId ?? position.instrumentID ?? 0
+    const metadata = instrumentMetadataMap.get(instrumentId)
     const quantity = toNumber(position.units)
     const averageOpen = toNumber(position.openRate)
     const currentPrice = toNumber(position.unrealizedPnL?.closeRate ?? position.closeRate)
@@ -117,8 +143,11 @@ function normalizePositions(positions: RawPosition[], fxContext: FxContext): Nor
     const marketValue = convertBrokerAmount(rawMarketValue, fxContext)
 
     return {
-      symbol: position.symbol ?? `ID-${instrumentId}`,
-      instrument_name: position.instrumentName ?? `Instrument ${instrumentId}`,
+      symbol: position.symbol ?? metadata?.internalSymbolFull ?? `ID-${instrumentId}`,
+      instrument_name:
+        position.instrumentName ??
+        metadata?.internalInstrumentDisplayName ??
+        `Instrument ${instrumentId}`,
       quantity: quantity || null,
       average_open: averageOpen || null,
       current_price: currentPrice || null,
@@ -157,16 +186,22 @@ function normalizeMirrors(mirrors: RawMirror[], fxContext: FxContext): Normalize
 export function normalizeEtoroData(args: {
   identity?: Record<string, unknown> | null
   pnl: { clientPortfolio?: RawClientPortfolio } | null
+  instrumentMetadata?: InstrumentMetadata[]
   fxContext: FxContext
 }): NormalizedPortfolioData {
   const pnlClient = args.pnl?.clientPortfolio ?? {}
+  const instrumentMetadataMap = buildInstrumentMetadataMap(args.instrumentMetadata ?? [])
 
   const availableCash = convertBrokerAmount(
     toNumber(pnlClient.credit) +
       toNumber(pnlClient.bonusCredit),
     args.fxContext
   )
-  const directHoldings = normalizePositions(pnlClient.positions ?? [], args.fxContext)
+  const directHoldings = normalizePositions(
+    pnlClient.positions ?? [],
+    args.fxContext,
+    instrumentMetadataMap
+  )
   const mirrorHoldings = normalizeMirrors(pnlClient.mirrors ?? [], args.fxContext)
   const holdings = [...directHoldings, ...mirrorHoldings]
   const holdingsValue = round(holdings.reduce((total, holding) => total + holding.market_value, 0))
@@ -200,6 +235,7 @@ export function normalizeEtoroData(args: {
     rawJson: {
       identity: args.identity ?? null,
       pnl: args.pnl,
+      instrumentMetadata: args.instrumentMetadata ?? [],
       currencies: {
         brokerCurrency: args.fxContext.brokerCurrency,
         fundCurrency: args.fxContext.fundCurrency,

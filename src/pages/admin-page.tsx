@@ -40,6 +40,7 @@ import {
   fetchClubData,
   fetchAdminData,
   readOptionalSettingNumber,
+  readOptionalSettingString,
   readSettingBoolean,
   readSettingNumber,
   readSettingString,
@@ -47,7 +48,7 @@ import {
   updateAppSetting,
   updateMember,
 } from '@/lib/api'
-import { formatCurrency, formatDateTime, formatNumber } from '@/lib/formatters'
+import { formatCurrency, formatDateTime, formatNumber, toDateTimeLocalValue } from '@/lib/formatters'
 import type { Tables } from '@/types/database'
 
 export function AdminPage() {
@@ -57,6 +58,7 @@ export function AdminPage() {
   const [fundCurrency, setFundCurrency] = useState('GBP')
   const [brokerCurrency, setBrokerCurrency] = useState('USD')
   const [brokerToFundFxRate, setBrokerToFundFxRate] = useState('')
+  const [performanceBaselineAt, setPerformanceBaselineAt] = useState('')
   const [manualSnapshotValue, setManualSnapshotValue] = useState('')
   const [manualSnapshotCash, setManualSnapshotCash] = useState('')
   const [manualSnapshotUnrealizedPnl, setManualSnapshotUnrealizedPnl] = useState('')
@@ -85,6 +87,10 @@ export function AdminPage() {
           'broker_to_fund_fx_rate',
           resolvedBrokerToFundFxRate === '' ? { value: null } : { value: Number(resolvedBrokerToFundFxRate) }
         ),
+        updateAppSetting(
+          'performance_baseline_at',
+          resolvedPerformanceBaselineAt === '' ? { value: null } : { value: new Date(resolvedPerformanceBaselineAt).toISOString() }
+        ),
       ])
     },
     onSuccess: () => {
@@ -94,6 +100,7 @@ export function AdminPage() {
       setFundCurrency('')
       setBrokerCurrency('')
       setBrokerToFundFxRate('')
+      setPerformanceBaselineAt('')
       void queryClient.invalidateQueries({ queryKey: ['admin-data'] })
       void queryClient.invalidateQueries({ queryKey: ['club-data'] })
     },
@@ -202,6 +209,12 @@ export function AdminPage() {
   const existingBrokerToFundFxRate = readOptionalSettingNumber(data?.settingsRows ?? [], 'broker_to_fund_fx_rate')
   const resolvedBrokerToFundFxRate =
     brokerToFundFxRate || (existingBrokerToFundFxRate !== null ? String(existingBrokerToFundFxRate) : '')
+  const existingPerformanceBaselineAt = readOptionalSettingString(data?.settingsRows ?? [], 'performance_baseline_at')
+  const resolvedPerformanceBaselineAt =
+    performanceBaselineAt ||
+    (existingPerformanceBaselineAt
+      ? toDateTimeLocalValue(existingPerformanceBaselineAt)
+      : '')
   const totalUnits = clubQuery.data?.dashboardSummary.totalUnits ?? 0
   const latestSnapshotFx = clubQuery.data?.latestSnapshotFx
   const manualSnapshotUnitPrice =
@@ -295,6 +308,18 @@ export function AdminPage() {
                     onChange={(event) => setBrokerToFundFxRate(event.target.value)}
                   />
                 </Field>
+                <Field
+                  id="performance-baseline-at"
+                  label="Performance tracking baseline"
+                  hint="Performance uses the first snapshot captured on or after this timestamp, rather than the original November starting unit price."
+                >
+                  <Input
+                    id="performance-baseline-at"
+                    type="datetime-local"
+                    value={resolvedPerformanceBaselineAt}
+                    onChange={(event) => setPerformanceBaselineAt(event.target.value)}
+                  />
+                </Field>
                 {existingBrokerToFundFxRate !== null ? (
                   <Button
                     type="button"
@@ -323,7 +348,7 @@ export function AdminPage() {
               <div className="mb-5 space-y-1">
                 <h2 className="text-lg font-semibold">Sync status</h2>
                 <p className="text-sm text-muted-foreground">
-                  Run a secure manual sync to capture current broker positions, convert broker totals into the fund currency, and keep quote prices untouched.
+                  Run a secure manual sync at any time. The backend also captures an automatic snapshot every hour so the overview stays fresh without exposing broker secrets.
                 </p>
               </div>
               <div className="grid gap-4 md:grid-cols-4">
@@ -371,7 +396,7 @@ export function AdminPage() {
                 </div>
               </div>
               <p className="mt-4 text-sm text-muted-foreground">
-                The sync function runs entirely on the backend, never exposes eToro credentials to the browser, and stores the FX metadata with each snapshot.
+                The sync function runs entirely on the backend, never exposes eToro credentials to the browser, stores the FX metadata with each snapshot, and deduplicates scheduled captures inside the same hour.
               </p>
             </div>
           </div>
