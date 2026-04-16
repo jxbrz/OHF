@@ -2,6 +2,8 @@
 
 Private full-stack investment-club dashboard for a pooled eToro account. The app replaces the workbook model with a React + Supabase stack, deterministic unit-based accounting, secure backend-only eToro syncs, and historical portfolio snapshots.
 
+by Charles Dobson and Stanley Gay
+
 ## Stack
 
 - Frontend: React, TypeScript, Vite, Tailwind CSS, shadcn/ui, Recharts, React Router, TanStack Query
