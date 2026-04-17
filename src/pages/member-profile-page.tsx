@@ -57,10 +57,12 @@ export function MemberProfilePage() {
 
   const data = clubQuery.data
   const fundCurrency = data.fundCurrency === 'USD' ? 'USD' : 'GBP'
-  const membersInOrder = [...data.memberSummaries].sort((left, right) =>
-    left.name.localeCompare(right.name)
-  )
-  const member = membersInOrder.find((entry) => entry.id === memberId)
+  const visibleMembersInOrder = data.memberSummaries
+    .filter((entry) => entry.netUnits > 0)
+    .sort((left, right) => left.name.localeCompare(right.name))
+  const member =
+    visibleMembersInOrder.find((entry) => entry.id === memberId) ??
+    data.memberSummaries.find((entry) => entry.id === memberId)
 
   if (!member) {
     return (
@@ -72,9 +74,12 @@ export function MemberProfilePage() {
     )
   }
 
-  const memberIndex = membersInOrder.findIndex((entry) => entry.id === member.id)
-  const previousMember = memberIndex > 0 ? membersInOrder[memberIndex - 1] : null
-  const nextMember = memberIndex < membersInOrder.length - 1 ? membersInOrder[memberIndex + 1] : null
+  const memberIndex = visibleMembersInOrder.findIndex((entry) => entry.id === member.id)
+  const previousMember = memberIndex > 0 ? visibleMembersInOrder[memberIndex - 1] : null
+  const nextMember =
+    memberIndex >= 0 && memberIndex < visibleMembersInOrder.length - 1
+      ? visibleMembersInOrder[memberIndex + 1]
+      : null
   const memberNameById = new Map(data.members.map((entry) => [entry.id, entry.name]))
   const memberTransactions = data.transactions
     .filter((transaction) => transaction.member_id === member.id)

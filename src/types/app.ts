@@ -33,19 +33,47 @@ export interface SnapshotFxMeta {
   referenceDate: string | null
 }
 
-export interface DailyReviewRecord extends Tables<'daily_reviews'> {
-  raw_json: (Tables<'daily_reviews'>['raw_json'] & {
-    bulletPoints?: string[]
-    outlookPoints?: string[]
-    dailyNarrative?: string
-    outlookNarrative?: string
-    scheduled?: boolean
-    openAiError?: string | null
-  }) | null
-}
-
 export interface UnitTransferRecord {
   transferGroupId: string
   fromTransaction: FundTransactionRecord
   toTransaction: FundTransactionRecord
+}
+
+export interface HoldingPositionDetail {
+  id: string
+  symbol: string
+  instrumentId: number | null
+  instrumentName: string
+  logoUrl: string | null
+  openedAt: string | null
+  side: 'BUY' | 'SELL'
+  quantity: number
+  averageOpen: number
+  currentPrice: number
+  stopLoss: number | null
+  takeProfit: number | null
+  investedValueBroker: number
+  marketValueBroker: number
+  marketValueFund: number
+  pnlBroker: number
+  pnlFund: number
+  pnlPct: number | null
+  leverage: number | null
+  isSettled: boolean | null
+}
+
+export interface HoldingDetailView {
+  symbol: string
+  instrumentName: string
+  logoUrl: string | null
+  quantity: number
+  averageOpen: number
+  currentPrice: number
+  marketValue: number
+  pnl: number
+  allocationPct: number
+  positions: HoldingPositionDetail[]
+  brokerCurrency: 'GBP' | 'USD'
+  fundCurrency: 'GBP' | 'USD'
+  capturedAt: string | null
 }

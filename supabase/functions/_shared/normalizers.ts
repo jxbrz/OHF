@@ -77,6 +77,19 @@ export interface NormalizedPortfolioData {
   rawJson: Record<string, unknown>
 }
 
+interface HoldingAggregationState {
+  symbol: string
+  instrument_name: string | null
+  quantityTotal: number
+  quantityCount: number
+  averageOpenWeightedTotal: number
+  averageOpenCount: number
+  currentPriceWeightedTotal: number
+  currentPriceCount: number
+  market_value: number
+  pnl: number
+}
+
 function toNumber(value: NumericValue, fallback = 0): number {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value
@@ -183,6 +196,80 @@ function normalizeMirrors(mirrors: RawMirror[], fxContext: FxContext): Normalize
   })
 }
 
+function aggregateHoldings(holdings: NormalizedHolding[]): NormalizedHolding[] {
+  const grouped = new Map<string, HoldingAggregationState>()
+
+  for (const holding of holdings) {
+    const existing = grouped.get(holding.symbol)
+
+    if (!existing) {
+      grouped.set(holding.symbol, {
+        symbol: holding.symbol,
+        instrument_name: holding.instrument_name,
+        quantityTotal: holding.quantity ?? 0,
+        quantityCount: holding.quantity ?? 0,
+        averageOpenWeightedTotal:
+          holding.quantity !== null && holding.average_open !== null
+            ? holding.quantity * holding.average_open
+            : 0,
+        averageOpenCount:
+          holding.quantity !== null && holding.average_open !== null ? holding.quantity : 0,
+        currentPriceWeightedTotal:
+          holding.quantity !== null && holding.current_price !== null
+            ? holding.quantity * holding.current_price
+            : 0,
+        currentPriceCount:
+          holding.quantity !== null && holding.current_price !== null ? holding.quantity : 0,
+        market_value: holding.market_value,
+        pnl: holding.pnl,
+      })
+      continue
+    }
+
+    existing.instrument_name = existing.instrument_name ?? holding.instrument_name
+    existing.market_value = round(existing.market_value + holding.market_value)
+    existing.pnl = round(existing.pnl + holding.pnl)
+
+    if (holding.quantity !== null) {
+      existing.quantityTotal = round(existing.quantityTotal + holding.quantity, 8)
+      existing.quantityCount = round(existing.quantityCount + holding.quantity, 8)
+    }
+
+    if (holding.quantity !== null && holding.average_open !== null) {
+      existing.averageOpenWeightedTotal = round(
+        existing.averageOpenWeightedTotal + holding.quantity * holding.average_open,
+        10
+      )
+      existing.averageOpenCount = round(existing.averageOpenCount + holding.quantity, 8)
+    }
+
+    if (holding.quantity !== null && holding.current_price !== null) {
+      existing.currentPriceWeightedTotal = round(
+        existing.currentPriceWeightedTotal + holding.quantity * holding.current_price,
+        10
+      )
+      existing.currentPriceCount = round(existing.currentPriceCount + holding.quantity, 8)
+    }
+  }
+
+  return [...grouped.values()].map((holding) => ({
+    symbol: holding.symbol,
+    instrument_name: holding.instrument_name,
+    quantity: holding.quantityCount > 0 ? round(holding.quantityTotal, 8) : null,
+    average_open:
+      holding.averageOpenCount > 0
+        ? round(holding.averageOpenWeightedTotal / holding.averageOpenCount, 8)
+        : null,
+    current_price:
+      holding.currentPriceCount > 0
+        ? round(holding.currentPriceWeightedTotal / holding.currentPriceCount, 8)
+        : null,
+    market_value: round(holding.market_value),
+    pnl: round(holding.pnl),
+    allocation_pct: 0,
+  }))
+}
+
 export function normalizeEtoroData(args: {
   identity?: Record<string, unknown> | null
   pnl: { clientPortfolio?: RawClientPortfolio } | null
@@ -203,7 +290,7 @@ export function normalizeEtoroData(args: {
     instrumentMetadataMap
   )
   const mirrorHoldings = normalizeMirrors(pnlClient.mirrors ?? [], args.fxContext)
-  const holdings = [...directHoldings, ...mirrorHoldings]
+  const holdings = aggregateHoldings([...directHoldings, ...mirrorHoldings])
   const holdingsValue = round(holdings.reduce((total, holding) => total + holding.market_value, 0))
   const totalAccountValue = round(availableCash + holdingsValue)
   const realizedPnl = convertBrokerAmount(

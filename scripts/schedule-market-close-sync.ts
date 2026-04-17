@@ -19,8 +19,6 @@ if (!syncCronSecret) {
 }
 
 const functionUrl = `${projectUrl.replace(/\/+$/, '')}/functions/v1/sync-etoro-portfolio`
-const reviewFunctionUrl = `${projectUrl.replace(/\/+$/, '')}/functions/v1/generate-daily-review`
-
 function sqlString(value: string) {
   return `'${value.replace(/'/g, "''")}'`
 }
@@ -34,16 +32,6 @@ const scheduleConfigs = [
     body: {
       trigger: 'scheduled_hourly_sync',
       scheduleKey: 'hourly-on-the-hour-utc',
-    },
-  },
-  {
-    jobName: 'ohf-daily-review-2130-utc',
-    cron: '30 21 * * 1-5',
-    scheduleKey: 'daily-review-2130-utc',
-    url: reviewFunctionUrl,
-    body: {
-      trigger: 'scheduled_daily_review',
-      scheduleKey: 'daily-review-2130-utc',
     },
   },
 ] as const

@@ -26,6 +26,33 @@ function jsonResponse(body: unknown, status = 200) {
   })
 }
 
+function describeError(error: unknown) {
+  if (error instanceof Error) {
+    return error.message
+  }
+
+  if (error && typeof error === 'object') {
+    const message =
+      'message' in error && typeof error.message === 'string'
+        ? error.message
+        : 'details' in error && typeof error.details === 'string'
+          ? error.details
+          : 'hint' in error && typeof error.hint === 'string'
+            ? error.hint
+            : null
+
+    if (message) {
+      return message
+    }
+  }
+
+  if (typeof error === 'string' && error.trim() !== '') {
+    return error
+  }
+
+  return 'Unknown sync error'
+}
+
 function unwrapSettingValue(value: unknown) {
   if (value && typeof value === 'object' && !Array.isArray(value) && 'value' in value) {
     return (value as { value?: unknown }).value
@@ -348,19 +375,21 @@ Deno.serve(async (request) => {
       fxReferenceDate: fxConversion.referenceDate,
     })
   } catch (error) {
+    const errorMessage = describeError(error)
+
     await adminClient.from('audit_logs').insert({
       actor_profile_id: actorProfileId,
       action: `${auditAction}_failed`,
       entity_type: 'portfolio_snapshot',
       payload: {
         ...auditPayload,
-        error: error instanceof Error ? error.message : 'Unknown sync error',
+        error: errorMessage,
       },
     })
 
     return jsonResponse(
       {
-        error: error instanceof Error ? error.message : 'Unknown sync error',
+        error: errorMessage,
       },
       500
     )

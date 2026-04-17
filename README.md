@@ -17,7 +17,6 @@ by Charles Dobson and Stanley Gay
 - Unit-based fund accounting with test coverage for units, ownership, pricing, separated fund cashflows, private transfer cost basis, and transfer-aware returns
 - Admin/member/transaction UI, sortable tables, charts, toasts, dialogs, and finance-style dark theme
 - Secure `sync-etoro-portfolio` Edge Function with mock fallback and audit logging
-- Secure `generate-daily-review` Edge Function that turns snapshot/holding changes into a short internal review log post
 - Sync-time FX conversion so broker totals can stay in USD while the stored fund ledger remains in GBP
 - Workbook import script for `OHF.xlsx`, including zero-unit summary-only members
 - Private member-to-member unit transfer flow that records paired `TRANSFER_OUT` and `TRANSFER_IN` ledger rows
@@ -52,7 +51,7 @@ npx supabase link --project-ref <YOUR_PROJECT_REF>
 npm run supabase:push
 ```
 
-6. Copy [.env.functions.example](/c:/Users/Stanl/OHF/.env.functions.example) to `.env.functions` and fill your eToro secrets plus `OPENAI_API_KEY` for AI daily reviews.
+6. Copy [.env.functions.example](/c:/Users/Stanl/OHF/.env.functions.example) to `.env.functions` and fill your eToro secrets.
 
 7. Push Edge Function secrets to the hosted project:
 
@@ -155,15 +154,14 @@ This repo includes [`vercel.json`](/c:/Users/Stanl/OHF/vercel.json) so Vercel wi
 ## eToro sync behavior
 
 - The browser never receives eToro credentials.
-- The Edge Function reads `ETORO_API_KEY`, `ETORO_USER_KEY`, `ETORO_BASE_URL`, `ETORO_USE_MOCK`, `SYNC_CRON_SECRET`, `OPENAI_API_KEY`, and `OPENAI_MODEL`.
+- The Edge Function reads `ETORO_API_KEY`, `ETORO_USER_KEY`, `ETORO_BASE_URL`, `ETORO_USE_MOCK`, and `SYNC_CRON_SECRET`.
 - Live validation now checks `GET /api/v1/me` before using the real-account portfolio endpoint, and the sync reads the official `GET /api/v1/trading/info/real/pnl` payload for positions, credit, and PnL.
 - Broker quote fields such as `openRate` and `closeRate` stay in USD for holdings display, while account summaries, holding market values, P&L, and unit price are converted into the configured fund currency during sync.
 - If no manual broker-to-fund FX override is configured, the sync fetches the latest official ECB reference rates and stores the applied FX metadata inside each snapshot.
 - If live credentials are missing, or mock mode is enabled, the sync falls back to deterministic mock data.
 - Admins can trigger the sync from the `/admin` page. Each sync stores one `portfolio_snapshots` row plus its `holding_snapshots`.
-- Admins can generate a daily review from the `/reviews` page. The review is stored in `daily_reviews`, includes a short "looking ahead" note for the next couple of days, and remains readable to the whole group.
-- `npm run supabase:schedule:hourly` creates one cron job on the hour every hour for broker snapshots, plus a weekday `21:30 UTC` cron job for the end-of-day review post.
-- The sync function deduplicates scheduled captures inside the same UTC hour, and the daily review job upserts by review date so the log stays clean.
+- `npm run supabase:schedule:hourly` creates one cron job on the hour every hour for broker snapshots.
+- The sync function deduplicates scheduled captures inside the same UTC hour.
 - Open browser tabs also refetch their dashboard data once per hour, so the UI catches up after the background snapshot lands.
 
 ## Workbook import behavior

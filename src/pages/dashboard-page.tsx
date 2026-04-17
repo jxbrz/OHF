@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
 import {
   Area,
   AreaChart,
@@ -10,8 +9,8 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { ActivitySquare, ArrowDownRight, ArrowUpRight, BookText, Wallet } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { ActivitySquare, ArrowDownRight, ArrowUpRight, Wallet } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { ChartTimeframeToggle } from '@/components/shared/chart-timeframe-toggle'
 import { EmptyState } from '@/components/shared/empty-state'
 import { PnlValue } from '@/components/shared/pnl-value'
@@ -28,75 +27,11 @@ import {
 import {
   formatCurrency,
   formatCurrencyAxis,
-  formatDate,
   formatDateTime,
   formatSignedUnitPrice,
   formatNumber,
 } from '@/lib/formatters'
 import { cn } from '@/lib/utils'
-
-function extractReviewNarrative(rawJson: unknown) {
-  if (
-    rawJson &&
-    typeof rawJson === 'object' &&
-    !Array.isArray(rawJson) &&
-    typeof (rawJson as { dailyNarrative?: unknown }).dailyNarrative === 'string'
-  ) {
-    return ((rawJson as { dailyNarrative: string }).dailyNarrative || '').trim()
-  }
-
-  if (
-    rawJson &&
-    typeof rawJson === 'object' &&
-    !Array.isArray(rawJson) &&
-    Array.isArray((rawJson as { bulletPoints?: unknown[] }).bulletPoints)
-  ) {
-    return (rawJson as { bulletPoints: unknown[] }).bulletPoints
-      .filter(
-        (entry): entry is string => typeof entry === 'string' && entry.trim() !== ''
-      )
-      .join(' ')
-  }
-
-  return ''
-}
-
-function extractReviewOutlook(rawJson: unknown) {
-  if (
-    rawJson &&
-    typeof rawJson === 'object' &&
-    !Array.isArray(rawJson) &&
-    typeof (rawJson as { outlookNarrative?: unknown }).outlookNarrative === 'string'
-  ) {
-    return ((rawJson as { outlookNarrative: string }).outlookNarrative || '').trim()
-  }
-
-  if (
-    rawJson &&
-    typeof rawJson === 'object' &&
-    !Array.isArray(rawJson) &&
-    Array.isArray((rawJson as { outlookPoints?: unknown[] }).outlookPoints)
-  ) {
-    return (rawJson as { outlookPoints: unknown[] }).outlookPoints
-      .filter(
-        (entry): entry is string => typeof entry === 'string' && entry.trim() !== ''
-      )
-      .join(' ')
-  }
-
-  return ''
-}
-
-function extractReviewMeta(rawJson: unknown) {
-  if (!rawJson || typeof rawJson !== 'object' || Array.isArray(rawJson)) {
-    return { scheduled: false, usedFallback: false }
-  }
-
-  return {
-    scheduled: (rawJson as { scheduled?: unknown }).scheduled === true,
-    usedFallback: typeof (rawJson as { openAiError?: unknown }).openAiError === 'string',
-  }
-}
 
 function OverviewSkeleton() {
   return (
@@ -305,9 +240,10 @@ export function DashboardPage() {
           ) : (
             <div className="space-y-1">
               {data.holdingsRows.map((holding) => (
-                <article
+                <Link
                   key={holding.id}
-                  className="flex items-center justify-between gap-4 border-b border-border/60 py-3 last:border-b-0"
+                  to={`/holdings/${encodeURIComponent(holding.symbol)}`}
+                  className="flex items-center justify-between gap-4 border-b border-border/60 py-3 transition-colors hover:text-primary last:border-b-0"
                 >
                   <div className="min-w-0">
                     <p className="font-medium text-foreground">{holding.symbol}</p>
@@ -322,89 +258,12 @@ export function DashboardPage() {
                       <PnlValue value={holding.pnl} className="font-medium" currency={fundCurrency} />
                     </div>
                   </div>
-                </article>
+                </Link>
               ))}
             </div>
           )}
         </section>
       </div>
-
-      <section className="panel-surface p-5 sm:p-6">
-        <div className="mb-4 flex items-center justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-semibold tracking-tight text-foreground">Latest daily review</h2>
-            <p className="text-sm text-muted-foreground">
-              A short internal note for the group based on the most recent reviewed trading day.
-            </p>
-          </div>
-          <Button asChild size="sm" variant="outline">
-            <Link to="/reviews">
-              <BookText className="size-4" />
-              View log
-            </Link>
-          </Button>
-        </div>
-
-        {data.latestDailyReview ? (
-          (() => {
-            const dailyNarrative = extractReviewNarrative(data.latestDailyReview.raw_json)
-            const outlookPoints = extractReviewOutlook(data.latestDailyReview.raw_json)
-            const meta = extractReviewMeta(data.latestDailyReview.raw_json)
-
-            return (
-              <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_280px]">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                    <span>{formatDate(data.latestDailyReview.review_date)}</span>
-                    <span className="rounded-full border border-border/70 bg-secondary/20 px-2.5 py-1 normal-case tracking-normal text-foreground">
-                      {meta.scheduled ? 'Auto post' : 'Manual post'}
-                    </span>
-                    <span className="rounded-full border border-border/70 bg-secondary/20 px-2.5 py-1 normal-case tracking-normal text-foreground">
-                      {meta.usedFallback ? 'System summary' : 'AI review'}
-                    </span>
-                  </div>
-                  <h3 className="mt-3 text-2xl font-semibold tracking-tight text-foreground">
-                    {data.latestDailyReview.title}
-                  </h3>
-                  <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
-                    {data.latestDailyReview.summary}
-                  </p>
-
-                  {dailyNarrative ? (
-                    <p className="mt-3 max-w-3xl text-sm leading-7 text-foreground">
-                      {dailyNarrative}
-                    </p>
-                  ) : null}
-
-                  {outlookPoints.length > 0 ? (
-                    <div className="mt-4 rounded-2xl border border-border/70 bg-secondary/15 p-4">
-                      <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                        Looking ahead
-                      </div>
-                      <div className="mt-2 text-sm text-foreground">{outlookPoints[0]}</div>
-                    </div>
-                  ) : null}
-                </div>
-                <div className="rounded-xl border border-border/70 bg-secondary/25 px-4 py-3 text-sm">
-                  <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Generated</div>
-                  <div className="mt-2 font-medium text-foreground">
-                    {formatDateTime(data.latestDailyReview.generated_at)}
-                  </div>
-                  {data.latestDailyReview.model ? (
-                    <div className="mt-1 text-xs text-muted-foreground">{data.latestDailyReview.model}</div>
-                  ) : null}
-                </div>
-              </div>
-            )
-          })()
-        ) : (
-          <EmptyState
-            icon={BookText}
-            title="No daily review yet"
-            description="Generate the first review and it will appear here as a quick note for the group."
-          />
-        )}
-      </section>
     </div>
   )
 }

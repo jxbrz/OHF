@@ -10,7 +10,6 @@ import {
 } from '@shared/calculations'
 import { getSupabaseClient } from '@/lib/supabase'
 import type {
-  DailyReviewRecord,
   DashboardSummary,
   EffectiveValuation,
   FundTransactionRecord,
@@ -35,7 +34,6 @@ export interface ClubData {
   dashboardSummary: DashboardSummary
   effectiveValuation: EffectiveValuation
   snapshotSeries: SnapshotChartPoint[]
-  latestDailyReview: DailyReviewRecord | null
   holdingsRows: HoldingRow[]
   ownershipAllocation: Array<{ name: string; value: number }>
   holdingsAllocation: Array<{ name: string; value: number }>
@@ -165,18 +163,6 @@ function normalizeTransactions(
   return (transactions ?? []).map(normalizeTransaction)
 }
 
-function normalizeDailyReview(
-  review: Tables<'daily_reviews'>
-): DailyReviewRecord {
-  return {
-    ...review,
-    raw_json:
-      review.raw_json && typeof review.raw_json === 'object' && !Array.isArray(review.raw_json)
-        ? review.raw_json
-        : null,
-  }
-}
-
 async function fetchLatestHoldings(snapshotId: string | null) {
   if (!snapshotId) {
     return [] as Tables<'holding_snapshots'>[]
@@ -198,31 +184,21 @@ async function fetchLatestHoldings(snapshotId: string | null) {
 
 export async function fetchClubData(): Promise<ClubData> {
   const supabase = getSupabaseClient()
-  const [membersResponse, transactionsResponse, snapshotsResponse, settingsResponse, latestDailyReviewResponse] = await Promise.all([
+  const [membersResponse, transactionsResponse, snapshotsResponse, settingsResponse] = await Promise.all([
     supabase.from('members').select('*').order('name'),
     supabase.from('fund_transactions').select('*').order('date', { ascending: false }),
     supabase.from('portfolio_snapshots').select('*').order('captured_at', { ascending: false }).limit(250),
     supabase.from('app_settings').select('*'),
-    supabase
-      .from('daily_reviews')
-      .select('*')
-      .order('review_date', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
   ])
 
   if (membersResponse.error) throw membersResponse.error
   if (transactionsResponse.error) throw transactionsResponse.error
   if (snapshotsResponse.error) throw snapshotsResponse.error
   if (settingsResponse.error) throw settingsResponse.error
-  if (latestDailyReviewResponse.error) throw latestDailyReviewResponse.error
 
   const members = membersResponse.data ?? []
   const transactions = normalizeTransactions(transactionsResponse.data)
   const snapshots = snapshotsResponse.data ?? []
-  const latestDailyReview = latestDailyReviewResponse.data
-    ? normalizeDailyReview(latestDailyReviewResponse.data)
-    : null
   const settingsRows = settingsResponse.data ?? []
   const latestSnapshot = snapshots[0] ?? null
   const latestHoldings = await fetchLatestHoldings(latestSnapshot?.id ?? null)
@@ -269,7 +245,6 @@ export async function fetchClubData(): Promise<ClubData> {
     dashboardSummary,
     effectiveValuation,
     snapshotSeries: buildSnapshotSeries(visibleSnapshots),
-    latestDailyReview,
     holdingsRows: buildHoldingsRows(latestHoldings),
     ownershipAllocation: buildOwnershipAllocation(memberSummaries),
     holdingsAllocation: buildHoldingsAllocation(latestHoldings),
@@ -552,47 +527,6 @@ export async function fetchManagedUsers() {
   }
 
   return (data?.users ?? []) as ManagedUserRecord[]
-}
-
-export async function fetchDailyReviews(limit = 40) {
-  const supabase = getSupabaseClient()
-  const { data, error } = await supabase
-    .from('daily_reviews')
-    .select('*')
-    .order('review_date', { ascending: false })
-    .limit(limit)
-
-  if (error) {
-    throw error
-  }
-
-  return (data ?? []).map(normalizeDailyReview)
-}
-
-export async function triggerDailyReviewGeneration(reviewDate?: string) {
-  const supabase = getSupabaseClient()
-  const { data, error } = await supabase.functions.invoke('generate-daily-review', {
-    method: 'POST',
-    body: reviewDate ? { reviewDate } : {},
-  })
-
-  if (error) {
-    throw error
-  }
-
-  return data as {
-    success: boolean
-    review: DailyReviewRecord
-  }
-}
-
-export async function deleteDailyReview(id: string) {
-  const supabase = getSupabaseClient()
-  const { error } = await supabase.from('daily_reviews').delete().eq('id', id)
-
-  if (error) {
-    throw error
-  }
 }
 
 export async function createClubUser(payload: CreateClubUserInput) {

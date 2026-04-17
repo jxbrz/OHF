@@ -53,7 +53,7 @@ export function MembersPage() {
         ownershipPct: (item) => item.ownershipPct,
         currentValue: (item) => item.currentValue,
         totalReturn: (item) => item.totalReturn,
-      })
+      }).filter((member) => member.netUnits > 0)
     : []
 
   const toggleSort = (key: MembersSortKey) =>
@@ -71,8 +71,8 @@ export function MembersPage() {
       {!data || members.length === 0 ? (
         <EmptyState
           icon={Users}
-          title="No members found"
-          description="Import the workbook or create members in the admin area to populate this page."
+          title="No active holders yet"
+          description="Members appear here once they hold units in the fund."
         />
       ) : (
         <>

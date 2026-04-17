@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { CandlestickChart } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { EmptyState } from '@/components/shared/empty-state'
 import { PageHeader } from '@/components/shared/page-header'
 import { PnlValue } from '@/components/shared/pnl-value'
@@ -114,8 +115,22 @@ export function HoldingsPage() {
             <TableBody>
               {holdings.map((holding) => (
                 <TableRow key={holding.id}>
-                  <TableCell className="font-medium text-foreground">{holding.symbol}</TableCell>
-                  <TableCell className="max-w-56 truncate text-muted-foreground">{holding.instrumentName}</TableCell>
+                  <TableCell className="font-medium text-foreground">
+                    <Link
+                      to={`/holdings/${encodeURIComponent(holding.symbol)}`}
+                      className="transition-colors hover:text-primary"
+                    >
+                      {holding.symbol}
+                    </Link>
+                  </TableCell>
+                  <TableCell className="max-w-56 truncate text-muted-foreground">
+                    <Link
+                      to={`/holdings/${encodeURIComponent(holding.symbol)}`}
+                      className="transition-colors hover:text-foreground"
+                    >
+                      {holding.instrumentName}
+                    </Link>
+                  </TableCell>
                   <TableCell className="text-right">{formatNumber(holding.quantity, 6)}</TableCell>
                   <TableCell className="text-right">{formatCurrency(holding.averageOpen, 'USD')}</TableCell>
                   <TableCell className="text-right">{formatCurrency(holding.currentPrice, 'USD')}</TableCell>

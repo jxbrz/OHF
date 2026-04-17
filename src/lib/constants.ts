@@ -4,7 +4,6 @@ import {
   CandlestickChart,
   Coins,
   LayoutDashboard,
-  NotebookText,
   Settings,
   Users,
 } from 'lucide-react'
@@ -20,7 +19,6 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/holdings', label: 'Holdings', icon: CandlestickChart },
   { to: '/members', label: 'Members', icon: Users },
   { to: '/transactions', label: 'Transactions', icon: Coins },
-  { to: '/reviews', label: 'Reviews', icon: NotebookText },
   { to: '/snapshots', label: 'Performance', icon: AreaChart },
   { to: '/admin', label: 'Admin', icon: Settings },
 ]

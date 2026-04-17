@@ -45,4 +45,59 @@ describe('eToro normalizer', () => {
       source: 'manual_override',
     })
   })
+
+  it('aggregates duplicate symbol positions into one holding row', () => {
+    const normalized = normalizeEtoroData({
+      identity: { realCid: 123 },
+      pnl: {
+        clientPortfolio: {
+          credit: 0,
+          positions: [
+            {
+              instrumentID: 5035,
+              units: 1,
+              openRate: 100,
+              closeRate: 110,
+              amount: 100,
+              pnL: 10,
+            },
+            {
+              instrumentID: 5035,
+              units: 2,
+              openRate: 120,
+              closeRate: 110,
+              amount: 240,
+              pnL: -20,
+            },
+          ],
+        },
+      },
+      instrumentMetadata: [
+        {
+          internalInstrumentId: 5035,
+          internalSymbolFull: 'SOP.PA',
+          internalInstrumentDisplayName: 'Sopra Steria Group',
+        },
+      ],
+      fxContext: {
+        brokerCurrency: 'USD',
+        fundCurrency: 'GBP',
+        rate: 1,
+        source: 'same_currency',
+        referenceDate: null,
+      },
+    })
+
+    expect(normalized.holdings).toHaveLength(1)
+    expect(normalized.holdings[0]).toMatchObject({
+      symbol: 'SOP.PA',
+      instrument_name: 'Sopra Steria Group',
+      quantity: 3,
+      average_open: 113.33333333,
+      current_price: 110,
+      market_value: 330,
+      pnl: -10,
+      allocation_pct: 1,
+    })
+  })
 })
