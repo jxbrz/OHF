@@ -4,6 +4,7 @@ import {
   buildMemberSummaries,
   buildOwnershipAllocation,
   buildSnapshotSeries,
+  calculateTotalUnitsOutstanding,
   computeDashboardSummary,
   filterSnapshotsFromDate,
   resolveEffectiveValuation,
@@ -21,12 +22,29 @@ import type {
 } from '@/types/app'
 import type { Json, Tables, TablesInsert, TablesUpdate } from '@/types/database'
 
+export type SnapshotRecord = Pick<
+  Tables<'portfolio_snapshots'>,
+  | 'id'
+  | 'captured_at'
+  | 'total_account_value'
+  | 'available_cash'
+  | 'unrealized_pnl'
+  | 'realized_pnl'
+  | 'total_units'
+  | 'unit_price'
+> & {
+  raw_json?: Json | null
+}
+
+const SNAPSHOT_SUMMARY_SELECT =
+  'id,captured_at,total_account_value,available_cash,unrealized_pnl,realized_pnl,total_units,unit_price'
+
 export interface ClubData {
   members: Tables<'members'>[]
   transactions: FundTransactionRecord[]
-  allSnapshots: Tables<'portfolio_snapshots'>[]
-  snapshots: Tables<'portfolio_snapshots'>[]
-  latestSnapshot: Tables<'portfolio_snapshots'> | null
+  allSnapshots: SnapshotRecord[]
+  snapshots: SnapshotRecord[]
+  latestSnapshot: SnapshotRecord | null
   latestHoldings: Tables<'holding_snapshots'>[]
   settingsRows: Tables<'app_settings'>[]
   settingsMap: Record<string, Json>
@@ -42,7 +60,6 @@ export interface ClubData {
   fundCurrency: string
   brokerCurrency: string
   brokerToFundFxRate: number | null
-  latestSnapshotFx: SnapshotFxMeta | null
 }
 
 export interface ManagedUserRecord {
@@ -107,7 +124,9 @@ function toSettingsMap(settings: Tables<'app_settings'>[]) {
   return Object.fromEntries(settings.map((setting) => [setting.key, setting.value]))
 }
 
-function extractSnapshotFx(snapshot: Tables<'portfolio_snapshots'> | null): SnapshotFxMeta | null {
+export function extractSnapshotFx(
+  snapshot: Pick<Tables<'portfolio_snapshots'>, 'raw_json'> | null
+): SnapshotFxMeta | null {
   const currencies =
     snapshot?.raw_json &&
     typeof snapshot.raw_json === 'object' &&
@@ -163,6 +182,25 @@ function normalizeTransactions(
   return (transactions ?? []).map(normalizeTransaction)
 }
 
+function normalizeSnapshotRecord(
+  snapshot: Pick<
+    Tables<'portfolio_snapshots'>,
+    | 'id'
+    | 'captured_at'
+    | 'total_account_value'
+    | 'available_cash'
+    | 'unrealized_pnl'
+    | 'realized_pnl'
+    | 'total_units'
+    | 'unit_price'
+  >
+): SnapshotRecord {
+  return {
+    ...snapshot,
+    raw_json: null,
+  }
+}
+
 async function fetchLatestHoldings(snapshotId: string | null) {
   if (!snapshotId) {
     return [] as Tables<'holding_snapshots'>[]
@@ -187,7 +225,11 @@ export async function fetchClubData(): Promise<ClubData> {
   const [membersResponse, transactionsResponse, snapshotsResponse, settingsResponse] = await Promise.all([
     supabase.from('members').select('*').order('name'),
     supabase.from('fund_transactions').select('*').order('date', { ascending: false }),
-    supabase.from('portfolio_snapshots').select('*').order('captured_at', { ascending: false }).limit(250),
+    supabase
+      .from('portfolio_snapshots')
+      .select(SNAPSHOT_SUMMARY_SELECT)
+      .order('captured_at', { ascending: false })
+      .limit(1000),
     supabase.from('app_settings').select('*'),
   ])
 
@@ -198,7 +240,7 @@ export async function fetchClubData(): Promise<ClubData> {
 
   const members = membersResponse.data ?? []
   const transactions = normalizeTransactions(transactionsResponse.data)
-  const snapshots = snapshotsResponse.data ?? []
+  const snapshots = (snapshotsResponse.data ?? []).map(normalizeSnapshotRecord)
   const settingsRows = settingsResponse.data ?? []
   const latestSnapshot = snapshots[0] ?? null
   const latestHoldings = await fetchLatestHoldings(latestSnapshot?.id ?? null)
@@ -253,7 +295,6 @@ export async function fetchClubData(): Promise<ClubData> {
     fundCurrency,
     brokerCurrency,
     brokerToFundFxRate,
-    latestSnapshotFx: extractSnapshotFx(latestSnapshot),
   }
 }
 
@@ -275,7 +316,7 @@ export async function fetchMembersAndTransactions() {
 
 export async function fetchAdminData() {
   const supabase = getSupabaseClient()
-  const [membersResponse, settingsResponse, latestSnapshotResponse, profilesResponse] = await Promise.all([
+  const [membersResponse, settingsResponse, latestSnapshotResponse, profilesResponse, transactionUnitsResponse] = await Promise.all([
     supabase.from('members').select('*').order('name'),
     supabase.from('app_settings').select('*'),
     supabase
@@ -285,19 +326,50 @@ export async function fetchAdminData() {
       .limit(1)
       .maybeSingle(),
     supabase.from('profiles').select('*').order('created_at', { ascending: false }),
+    supabase.from('fund_transactions').select('type, units_amount'),
   ])
 
   if (membersResponse.error) throw membersResponse.error
   if (settingsResponse.error) throw settingsResponse.error
   if (latestSnapshotResponse.error) throw latestSnapshotResponse.error
   if (profilesResponse.error) throw profilesResponse.error
+  if (transactionUnitsResponse.error) throw transactionUnitsResponse.error
+
+  const totalUnits = calculateTotalUnitsOutstanding(
+    (transactionUnitsResponse.data ?? []).map((transaction) => ({
+      member_id: '',
+      date: '',
+      amount: 0,
+      unit_price_at_time: 0,
+      ...transaction,
+      type: transaction.type as FundTransactionRecord['type'],
+    }))
+  )
 
   return {
     members: membersResponse.data ?? [],
     profiles: profilesResponse.data ?? [],
     settingsRows: settingsResponse.data ?? [],
     latestSnapshot: latestSnapshotResponse.data,
+    latestSnapshotFx: extractSnapshotFx(latestSnapshotResponse.data),
+    totalUnits,
   }
+}
+
+export async function fetchLatestSnapshotDetail() {
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase
+    .from('portfolio_snapshots')
+    .select(`${SNAPSHOT_SUMMARY_SELECT},raw_json`)
+    .order('captured_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    throw error
+  }
+
+  return data
 }
 
 export async function createMember(payload: TablesInsert<'members'>) {

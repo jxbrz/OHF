@@ -13,7 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { fetchClubData } from '@/lib/api'
+import { fetchClubData, fetchLatestSnapshotDetail } from '@/lib/api'
 import { buildHoldingDetailView } from '@/lib/holding-details'
 import {
   formatCurrency,
@@ -30,18 +30,28 @@ export function HoldingProfilePage() {
     queryKey: ['club-data'],
     queryFn: fetchClubData,
   })
+  const latestSnapshotDetailQuery = useQuery({
+    queryKey: ['latest-snapshot-detail'],
+    queryFn: fetchLatestSnapshotDetail,
+  })
 
-  if (clubQuery.isError) {
+  if (clubQuery.isError || latestSnapshotDetailQuery.isError) {
     return (
       <EmptyState
         icon={CandlestickChart}
         title="Unable to load holding profile"
-        description={clubQuery.error instanceof Error ? clubQuery.error.message : 'Unknown holding error.'}
+        description={
+          clubQuery.error instanceof Error
+            ? clubQuery.error.message
+            : latestSnapshotDetailQuery.error instanceof Error
+              ? latestSnapshotDetailQuery.error.message
+              : 'Unknown holding error.'
+        }
       />
     )
   }
 
-  if (!clubQuery.data || !symbol) {
+  if (!clubQuery.data || latestSnapshotDetailQuery.isPending || !symbol) {
     return null
   }
 
@@ -72,7 +82,7 @@ export function HoldingProfilePage() {
   const detail = buildHoldingDetailView({
     symbol: holding.symbol,
     holding,
-    latestSnapshot: data.latestSnapshot,
+    latestSnapshot: latestSnapshotDetailQuery.data,
     brokerCurrency,
     fundCurrency,
   })

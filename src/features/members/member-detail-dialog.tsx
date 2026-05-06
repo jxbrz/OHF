@@ -27,14 +27,14 @@ import {
   formatNumber,
 } from '@/lib/formatters'
 import { getTransferCounterpartyName } from '@/lib/transfers'
-import type { FundTransactionRecord, MemberSummaryRow } from '@/types/app'
+import type { FundTransactionRecord, MemberSummaryRow, PortfolioSnapshotLike } from '@/types/app'
 import type { Tables } from '@/types/database'
 
 interface MemberDetailDrawerProps {
   member: MemberSummaryRow | null
   members: Tables<'members'>[]
   transactions: FundTransactionRecord[]
-  snapshots: Tables<'portfolio_snapshots'>[]
+  snapshots: PortfolioSnapshotLike[]
   fundCurrency: 'GBP' | 'USD'
   open: boolean
   onOpenChange: (open: boolean) => void

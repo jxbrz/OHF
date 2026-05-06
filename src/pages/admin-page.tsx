@@ -39,7 +39,6 @@ import { UserFormDialog } from '@/features/admin/user-form-dialog'
 import {
   createManualPortfolioSnapshot,
   deleteMember,
-  fetchClubData,
   fetchAdminData,
   fetchManagedUsers,
   readOptionalSettingNumber,
@@ -79,10 +78,6 @@ export function AdminPage() {
   const managedUsersQuery = useQuery({
     queryKey: ['managed-users'],
     queryFn: fetchManagedUsers,
-  })
-  const clubQuery = useQuery({
-    queryKey: ['club-data'],
-    queryFn: fetchClubData,
   })
 
   const settingMutation = useMutation({
@@ -136,7 +131,7 @@ export function AdminPage() {
 
   const manualSnapshotMutation = useMutation({
     mutationFn: async () => {
-      const totalUnits = clubQuery.data?.dashboardSummary.totalUnits ?? 0
+      const totalUnits = data?.totalUnits ?? 0
       const startingPrice = readSettingNumber(adminQuery.data?.settingsRows ?? [], 'starting_unit_price', 1)
       const totalAccountValue = Number(manualSnapshotValue)
       const capturedAt = manualSnapshotCapturedAt
@@ -164,7 +159,6 @@ export function AdminPage() {
       setManualSnapshotRealizedPnl('')
       setManualSnapshotCapturedAt('')
       void queryClient.invalidateQueries({ queryKey: ['admin-data'] })
-      void queryClient.invalidateQueries({ queryKey: ['club-data'] })
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : 'Unable to capture manual snapshot.')
@@ -237,8 +231,8 @@ export function AdminPage() {
     (existingPerformanceBaselineAt
       ? toDateTimeLocalValue(existingPerformanceBaselineAt)
       : '')
-  const totalUnits = clubQuery.data?.dashboardSummary.totalUnits ?? 0
-  const latestSnapshotFx = clubQuery.data?.latestSnapshotFx
+  const totalUnits = data?.totalUnits ?? 0
+  const latestSnapshotFx = data?.latestSnapshotFx ?? null
   const manualSnapshotUnitPrice =
     manualSnapshotValue && totalUnits > 0
       ? calculateCurrentUnitPrice(Number(manualSnapshotValue), totalUnits, resolvedStartingUnitPrice)

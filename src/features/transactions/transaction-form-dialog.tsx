@@ -20,7 +20,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { DIRECT_TRANSACTION_TYPE_OPTIONS } from '@/lib/constants'
 import { createTransaction, updateTransaction } from '@/lib/api'
 import { formatDateTime, formatNumber, toDateTimeLocalValue } from '@/lib/formatters'
-import type { FundTransactionRecord } from '@/types/app'
+import type { FundTransactionRecord, PortfolioSnapshotLike } from '@/types/app'
 import type { Tables } from '@/types/database'
 
 const transactionSchema = z.object({
@@ -52,7 +52,7 @@ function resolveDirectTransactionType(type?: FundTransactionRecord['type']): Tra
 interface TransactionFormDialogProps {
   members: Tables<'members'>[]
   profileId: string | null
-  snapshots: Tables<'portfolio_snapshots'>[]
+  snapshots: PortfolioSnapshotLike[]
   startingUnitPrice: number
   open: boolean
   onOpenChange: (open: boolean) => void
