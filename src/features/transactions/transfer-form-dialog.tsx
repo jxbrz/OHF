@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { createUnitTransfer, updateUnitTransfer } from '@/lib/api'
+import { getErrorMessage } from '@/lib/errors'
 import { formatCurrency, formatNumber, toDateTimeLocalValue } from '@/lib/formatters'
 import type { FundTransactionRecord, UnitTransferRecord } from '@/types/app'
 import type { Tables } from '@/types/database'
@@ -177,7 +178,7 @@ export function TransferFormDialog({
       onOpenChange(false)
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : 'Unable to save transfer.')
+      toast.error(getErrorMessage(error, 'Unable to save transfer.'))
     },
   })
 

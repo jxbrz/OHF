@@ -19,6 +19,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { DIRECT_TRANSACTION_TYPE_OPTIONS } from '@/lib/constants'
 import { createTransaction, updateTransaction } from '@/lib/api'
+import { getErrorMessage } from '@/lib/errors'
 import { formatDateTime, formatNumber, toDateTimeLocalValue } from '@/lib/formatters'
 import type { FundTransactionRecord, PortfolioSnapshotLike } from '@/types/app'
 import type { Tables } from '@/types/database'
@@ -171,7 +172,7 @@ export function TransactionFormDialog({
       onOpenChange(false)
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : 'Unable to save transaction.')
+      toast.error(getErrorMessage(error, 'Unable to save transaction.'))
     },
   })
 
