@@ -51,4 +51,14 @@ describe('TransferFormDialog', () => {
     expect(screen.getByRole('combobox', { name: 'Selling member' })).toHaveTextContent('Alice Holder')
     expect(screen.getByRole('combobox', { name: 'Buying member' })).toHaveTextContent('Bob Buyer')
   })
+
+  it('keeps long transfer forms scrollable inside the dialog', () => {
+    renderTransferDialog()
+
+    expect(screen.getByRole('dialog')).toHaveClass('grid-rows-[auto_minmax(0,1fr)]')
+    expect(screen.getByRole('button', { name: 'Record transfer' }).closest('form')).toHaveClass(
+      'min-h-0',
+      'overflow-y-auto'
+    )
+  })
 })

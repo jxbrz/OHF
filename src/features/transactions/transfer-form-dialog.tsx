@@ -183,7 +183,7 @@ export function TransferFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl bg-card/98">
+      <DialogContent className="grid-rows-[auto_minmax(0,1fr)] max-w-3xl bg-card/98">
         <DialogHeader>
           <DialogTitle>{transfer ? 'Edit unit transfer' : 'Transfer units'}</DialogTitle>
           <DialogDescription>
@@ -191,7 +191,7 @@ export function TransferFormDialog({
           </DialogDescription>
         </DialogHeader>
         <form
-          className="grid gap-5 overflow-y-auto pr-1 md:grid-cols-2"
+          className="grid min-h-0 gap-5 overflow-y-auto pr-1 md:grid-cols-2"
           onSubmit={form.handleSubmit((values) => mutation.mutate(values))}
         >
           <Field

@@ -177,7 +177,7 @@ export function TransactionFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl bg-card/98">
+      <DialogContent className="grid-rows-[auto_minmax(0,1fr)] max-w-3xl bg-card/98">
         <DialogHeader>
           <DialogTitle>{transaction ? 'Edit transaction' : 'New transaction'}</DialogTitle>
           <DialogDescription>
@@ -185,7 +185,7 @@ export function TransactionFormDialog({
           </DialogDescription>
         </DialogHeader>
         <form
-          className="grid gap-5 overflow-y-auto pr-1 md:grid-cols-2"
+          className="grid min-h-0 gap-5 overflow-y-auto pr-1 md:grid-cols-2"
           onSubmit={form.handleSubmit((values) => mutation.mutate(values))}
         >
           <Field
