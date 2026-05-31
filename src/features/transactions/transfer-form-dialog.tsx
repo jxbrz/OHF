@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { calculateMemberUnitsAsOf } from '@shared/calculations'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { toast } from 'sonner'
 import { z } from 'zod'
@@ -69,6 +69,10 @@ export function TransferFormDialog({
   draftTransfer,
 }: TransferFormDialogProps) {
   const queryClient = useQueryClient()
+  const memberNameById = useMemo(
+    () => new Map(members.map((member) => [member.id, member.name])),
+    [members]
+  )
   const form = useForm<TransferFormValues, undefined, TransferSubmitValues>({
     resolver: zodResolver(transferSchema),
     defaultValues: {
@@ -202,7 +206,9 @@ export function TransferFormDialog({
               render={({ field }) => (
                 <Select value={field.value} onValueChange={field.onChange}>
                   <SelectTrigger id="transfer-from-member" className="w-full">
-                    <SelectValue placeholder="Choose the seller" />
+                    <SelectValue placeholder="Choose the seller">
+                      {field.value ? memberNameById.get(field.value) ?? 'Unknown member' : undefined}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {members.map((member) => (
@@ -227,7 +233,9 @@ export function TransferFormDialog({
               render={({ field }) => (
                 <Select value={field.value} onValueChange={field.onChange}>
                   <SelectTrigger id="transfer-to-member" className="w-full">
-                    <SelectValue placeholder="Choose the buyer" />
+                    <SelectValue placeholder="Choose the buyer">
+                      {field.value ? memberNameById.get(field.value) ?? 'Unknown member' : undefined}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {members.map((member) => (
