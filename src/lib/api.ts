@@ -437,7 +437,7 @@ function buildTransferRows(
 
   return [
     {
-      id: options?.fromTransactionId,
+      ...(options?.fromTransactionId ? { id: options.fromTransactionId } : {}),
       member_id: payload.from_member_id,
       counterparty_member_id: payload.to_member_id,
       transfer_group_id: transferGroupId,
@@ -450,7 +450,7 @@ function buildTransferRows(
       created_by: payload.created_by ?? null,
     },
     {
-      id: options?.toTransactionId,
+      ...(options?.toTransactionId ? { id: options.toTransactionId } : {}),
       member_id: payload.to_member_id,
       counterparty_member_id: payload.from_member_id,
       transfer_group_id: transferGroupId,
