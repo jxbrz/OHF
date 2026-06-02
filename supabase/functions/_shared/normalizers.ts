@@ -1,5 +1,7 @@
 type NumericValue = number | string | null | undefined
 
+export const ETORO_NORMALIZER_VERSION = 'smart-portfolio-nested-positions-v3'
+
 interface RawPosition {
   positionId?: number
   positionID?: number
@@ -534,6 +536,7 @@ export function normalizeEtoroData(args: {
     realizedPnl,
     holdings: normalizedHoldings,
     rawJson: {
+      debugVersion: ETORO_NORMALIZER_VERSION,
       identity: args.identity ?? null,
       pnl: args.pnl,
       instrumentMetadata: args.instrumentMetadata ?? [],
@@ -551,6 +554,7 @@ export function normalizeEtoroData(args: {
       mirrorCount: pnlClient.mirrors?.length ?? 0,
       positionCount: pnlClient.positions?.length ?? 0,
       valuation: {
+        debugVersion: ETORO_NORMALIZER_VERSION,
         brokerReportedTotalAccountValue: brokerReportedTotal.value,
         brokerReportedTotalAccountValueUsd: brokerReportedTotal.valueUsd,
         brokerReportedTotalAccountValueSourceField: brokerReportedTotal.sourceField,

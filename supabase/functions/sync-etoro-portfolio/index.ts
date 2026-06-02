@@ -3,7 +3,7 @@ import { calculateCurrentUnitPrice, calculateTotalUnitsOutstanding } from '../..
 import { corsHeaders } from '../_shared/cors.ts'
 import { fetchEtoroData } from '../_shared/etoro-client.ts'
 import { resolveFxConversion } from '../_shared/fx-rates.ts'
-import { normalizeEtoroData } from '../_shared/normalizers.ts'
+import { ETORO_NORMALIZER_VERSION, normalizeEtoroData } from '../_shared/normalizers.ts'
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL')
 const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')
@@ -288,6 +288,7 @@ Deno.serve(async (request) => {
 
     const rawJson = {
       ...normalized.rawJson,
+      debugVersion: ETORO_NORMALIZER_VERSION,
       scheduler: isScheduledRequest
         ? {
             scheduleKey: requestBody.scheduleKey ?? null,
@@ -373,6 +374,8 @@ Deno.serve(async (request) => {
       fxRate: fxConversion.rate,
       fxSource: fxConversion.source,
       fxReferenceDate: fxConversion.referenceDate,
+      normalizerVersion: ETORO_NORMALIZER_VERSION,
+      valuationDebug: rawJson.valuation ?? null,
     })
   } catch (error) {
     const errorMessage = describeError(error)

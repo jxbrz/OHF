@@ -1,4 +1,4 @@
-import { normalizeEtoroData } from './normalizers'
+import { ETORO_NORMALIZER_VERSION, normalizeEtoroData } from './normalizers'
 import { calculateCurrentUnitPrice } from '../../../shared/calculations/index'
 
 describe('eToro normalizer', () => {
@@ -303,7 +303,9 @@ describe('eToro normalizer', () => {
     expect(quantumHolding?.market_value).not.toBe(0.7875)
     expect(normalized.totalAccountValue).toBe(501.7125)
     expect(calculateCurrentUnitPrice(normalized.totalAccountValue, 250, 1)).toBe(2.00685)
+    expect(normalized.rawJson.debugVersion).toBe(ETORO_NORMALIZER_VERSION)
     expect(normalized.rawJson.valuation).toMatchObject({
+      debugVersion: ETORO_NORMALIZER_VERSION,
       creditUsd: 67.6,
       directPositionsUsd: 98.56,
       mirrorValuesUsd: 502.79,
