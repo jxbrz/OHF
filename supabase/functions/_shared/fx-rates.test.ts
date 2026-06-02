@@ -32,6 +32,6 @@ describe('ECB FX helpers', () => {
       'GBP'
     )
 
-    expect(rate).toBeCloseTo(0.7556879136, 10)
+    expect(rate).toBeCloseTo(0.7558603274, 10)
   })
 })

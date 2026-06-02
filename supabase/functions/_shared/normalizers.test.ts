@@ -32,6 +32,14 @@ describe('eToro normalizer', () => {
     expect(normalized.availableCash).toBe(7.5)
     expect(normalized.unrealizedPnl).toBe(3.75)
     expect(normalized.totalAccountValue).toBe(86.25)
+    expect(normalized.rawJson.valuation).toMatchObject({
+      brokerReportedTotalAccountValue: null,
+      reconstructedHoldingsValue: 78.75,
+      reconstructedTotalAccountValue: 86.25,
+      valuationSource: 'reconstructed',
+      mirrorCount: 0,
+      positionCount: 1,
+    })
     expect(normalized.holdings[0]).toMatchObject({
       average_open: 200,
       current_price: 210,
@@ -99,5 +107,121 @@ describe('eToro normalizer', () => {
       pnl: -10,
       allocation_pct: 1,
     })
+  })
+
+  it('uses explicit current value for Smart Portfolio mirror holdings', () => {
+    const normalized = normalizeEtoroData({
+      pnl: {
+        clientPortfolio: {
+          credit: 100,
+          mirrors: [
+            {
+              mirrorId: 42,
+              parentUsername: 'QuantumComputing',
+              initialInvestment: 500,
+              currentValue: 720,
+              availableAmount: 25,
+              closedPositionsNetProfit: 12,
+            },
+          ],
+        },
+      },
+      fxContext: {
+        brokerCurrency: 'USD',
+        fundCurrency: 'USD',
+        rate: 1,
+        source: 'same_currency',
+        referenceDate: null,
+      },
+    })
+
+    expect(normalized.totalAccountValue).toBe(820)
+    expect(normalized.holdings[0]).toMatchObject({
+      symbol: 'MIRROR-QuantumComputing',
+      instrument_name: 'CopyTrader: QuantumComputing',
+      market_value: 720,
+      pnl: 12,
+      allocation_pct: 0.878049,
+    })
+  })
+
+  it('does not treat mirror availableAmount as the market value when investment and pnl are present', () => {
+    const normalized = normalizeEtoroData({
+      pnl: {
+        clientPortfolio: {
+          credit: 0,
+          mirrors: [
+            {
+              mirrorId: 77,
+              parentUsername: 'QuantumComputing',
+              initialInvestment: 1000,
+              unrealizedPnL: 225,
+              closedPositionsNetProfit: -50,
+              availableAmount: 40,
+            },
+          ],
+        },
+      },
+      fxContext: {
+        brokerCurrency: 'USD',
+        fundCurrency: 'USD',
+        rate: 1,
+        source: 'same_currency',
+        referenceDate: null,
+      },
+    })
+
+    expect(normalized.totalAccountValue).toBe(1175)
+    expect(normalized.holdings[0]).toMatchObject({
+      market_value: 1175,
+      pnl: 175,
+    })
+  })
+
+  it('prefers broker-reported total account equity over reconstructed holdings value', () => {
+    const normalized = normalizeEtoroData({
+      pnl: {
+        clientPortfolio: {
+          credit: 50,
+          equity: 1500,
+          positions: [
+            {
+              instrumentID: 1001,
+              units: 1,
+              openRate: 100,
+              closeRate: 500,
+              amount: 500,
+              pnL: 0,
+            },
+          ],
+          mirrors: [
+            {
+              mirrorId: 7,
+              parentUsername: 'QuantumComputing',
+              availableAmount: 10,
+            },
+          ],
+        },
+      },
+      fxContext: {
+        brokerCurrency: 'USD',
+        fundCurrency: 'GBP',
+        rate: 0.8,
+        source: 'manual_override',
+        referenceDate: null,
+      },
+    })
+
+    expect(normalized.totalAccountValue).toBe(1200)
+    expect(normalized.rawJson.valuation).toMatchObject({
+      brokerReportedTotalAccountValue: 1200,
+      brokerReportedTotalAccountValueSourceField: 'equity',
+      reconstructedHoldingsValue: 408,
+      reconstructedTotalAccountValue: 448,
+      valuationSource: 'broker_reported',
+      mirrorCount: 1,
+      positionCount: 1,
+    })
+    expect(normalized.holdings.map((holding) => holding.market_value)).toEqual([400, 8])
   })
 })

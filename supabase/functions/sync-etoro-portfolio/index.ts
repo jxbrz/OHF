@@ -4,6 +4,7 @@ import { corsHeaders } from '../_shared/cors.ts'
 import { fetchEtoroData } from '../_shared/etoro-client.ts'
 import { resolveFxConversion } from '../_shared/fx-rates.ts'
 import { normalizeEtoroData } from '../_shared/normalizers.ts'
+import { evaluateValuationJump } from '../_shared/sync-valuation-guard.ts'
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL')
 const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')
@@ -226,6 +227,8 @@ Deno.serve(async (request) => {
     const brokerCurrency = readSettingString(settingsMap, 'broker_account_currency', 'USD')
     const fundCurrency = readSettingString(settingsMap, 'fund_base_currency', 'GBP')
     const manualBrokerToFundRate = readSettingNumber(settingsMap, 'broker_to_fund_fx_rate')
+    const maxValuationJumpPct =
+      readSettingNumber(settingsMap, 'etoro_sync_max_valuation_change_pct') ?? 35
     const autoScheduledSyncEnabled = readSettingBoolean(
       settingsMap,
       'auto_hourly_sync_enabled',
@@ -284,6 +287,56 @@ Deno.serve(async (request) => {
       fx: fxConversion,
       scheduled: isScheduledRequest,
       syncBucket: isScheduledRequest ? currentSyncBucket : null,
+    }
+
+    const { data: previousSnapshot, error: previousSnapshotError } = await adminClient
+      .from('portfolio_snapshots')
+      .select('id, captured_at, total_account_value')
+      .order('captured_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (previousSnapshotError) {
+      throw previousSnapshotError
+    }
+
+    const valuationJumpDecision = evaluateValuationJump({
+      previousSnapshot,
+      newTotalAccountValue: normalized.totalAccountValue,
+      thresholdPct: maxValuationJumpPct,
+      trigger: requestBody.trigger,
+    })
+
+    if (valuationJumpDecision.shouldReject) {
+      const rejectionPayload = {
+        ...auditPayload,
+        reason: 'Suspicious total account value movement before snapshot insert.',
+        valuationJump: valuationJumpDecision,
+        valuation: normalized.rawJson.valuation ?? {
+          brokerReportedTotalAccountValue: normalized.rawJson.brokerReportedTotalAccountValue,
+          reconstructedHoldingsValue: normalized.rawJson.reconstructedHoldingsValue,
+          valuationSource: normalized.rawJson.valuationSource,
+          mirrorCount: normalized.rawJson.mirrorCount,
+          positionCount: normalized.rawJson.positionCount,
+        },
+      }
+
+      await adminClient.from('audit_logs').insert({
+        actor_profile_id: actorProfileId,
+        action: `${auditAction}_rejected`,
+        entity_type: 'portfolio_snapshot',
+        payload: rejectionPayload,
+      })
+
+      return jsonResponse(
+        {
+          error:
+            'Sync rejected because total account value changed more than the configured threshold.',
+          valuationJump: valuationJumpDecision,
+          forceTrigger: 'manual_force',
+        },
+        409
+      )
     }
 
     const rawJson = {

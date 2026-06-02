@@ -26,14 +26,36 @@ interface RawMirror {
   mirrorId?: number
   mirrorID?: number
   parentUsername?: string
+  currentValue?: NumericValue
+  value?: NumericValue
+  equity?: NumericValue
+  netValue?: NumericValue
+  marketValue?: NumericValue
+  portfolioValue?: NumericValue
   availableAmount?: NumericValue
   initialInvestment?: NumericValue
+  unrealizedPnL?: NumericValue | {
+    pnL?: NumericValue
+  }
+  pnL?: NumericValue
   closedPositionsNetProfit?: NumericValue
 }
 
 interface RawClientPortfolio {
   credit?: NumericValue
   bonusCredit?: NumericValue
+  totalAccountValue?: NumericValue
+  accountValue?: NumericValue
+  accountEquity?: NumericValue
+  clientEquity?: NumericValue
+  equity?: NumericValue
+  totalEquity?: NumericValue
+  portfolioValue?: NumericValue
+  totalPortfolioValue?: NumericValue
+  currentValue?: NumericValue
+  value?: NumericValue
+  netValue?: NumericValue
+  netAssetValue?: NumericValue
   unrealizedPnL?: NumericValue
   accountCurrencyId?: NumericValue
   positions?: RawPosition[]
@@ -90,6 +112,11 @@ interface HoldingAggregationState {
   pnl: number
 }
 
+interface BrokerTotalResolution {
+  value: number | null
+  sourceField: string | null
+}
+
 function toNumber(value: NumericValue, fallback = 0): number {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value
@@ -112,6 +139,92 @@ function round(value: number, decimals = 6): number {
 
 function convertBrokerAmount(value: number, fxContext: FxContext) {
   return round(value * fxContext.rate)
+}
+
+function pickFirstNonNegativeNumber(
+  source: object,
+  fields: string[]
+): { value: number | null; field: string | null } {
+  for (const field of fields) {
+    const value = toNumber((source as Record<string, unknown>)[field] as NumericValue, Number.NaN)
+
+    if (Number.isFinite(value) && value >= 0) {
+      return { value, field }
+    }
+  }
+
+  return { value: null, field: null }
+}
+
+function resolveBrokerReportedTotalAccountValue(
+  clientPortfolio: RawClientPortfolio,
+  fxContext: FxContext
+): BrokerTotalResolution {
+  const resolved = pickFirstNonNegativeNumber(clientPortfolio, [
+    'totalAccountValue',
+    'accountValue',
+    'accountEquity',
+    'clientEquity',
+    'totalEquity',
+    'equity',
+    'netAssetValue',
+    'netValue',
+    'totalPortfolioValue',
+    'portfolioValue',
+    'currentValue',
+    'value',
+  ])
+
+  return {
+    value: resolved.value !== null ? convertBrokerAmount(resolved.value, fxContext) : null,
+    sourceField: resolved.field,
+  }
+}
+
+function resolveMirrorUnrealizedPnl(mirror: RawMirror) {
+  if (
+    mirror.unrealizedPnL &&
+    typeof mirror.unrealizedPnL === 'object' &&
+    !Array.isArray(mirror.unrealizedPnL)
+  ) {
+    return toNumber(mirror.unrealizedPnL.pnL)
+  }
+
+  return toNumber(mirror.unrealizedPnL ?? mirror.pnL)
+}
+
+function resolveMirrorValue(mirror: RawMirror) {
+  const explicitValue = pickFirstNonNegativeNumber(mirror, [
+    'currentValue',
+    'value',
+    'equity',
+    'netValue',
+    'marketValue',
+    'portfolioValue',
+  ])
+
+  if (explicitValue.value !== null) {
+    return {
+      value: explicitValue.value,
+      source: explicitValue.field ?? 'explicit_value',
+    }
+  }
+
+  const initialInvestment = toNumber(mirror.initialInvestment)
+  const unrealizedPnl = resolveMirrorUnrealizedPnl(mirror)
+  const closedPositionsNetProfit = toNumber(mirror.closedPositionsNetProfit)
+
+  if (initialInvestment > 0) {
+    return {
+      value: initialInvestment + unrealizedPnl + closedPositionsNetProfit,
+      source: 'initial_investment_plus_pnl',
+    }
+  }
+
+  return {
+    value: toNumber(mirror.availableAmount),
+    source: 'available_amount',
+  }
 }
 
 function buildInstrumentMetadataMap(metadata: InstrumentMetadata[]) {
@@ -174,11 +287,10 @@ function normalizePositions(
 function normalizeMirrors(mirrors: RawMirror[], fxContext: FxContext): NormalizedHolding[] {
   return mirrors.map((mirror) => {
     const mirrorId = mirror.mirrorId ?? mirror.mirrorID ?? 0
-    const rawPnl = round(toNumber(mirror.closedPositionsNetProfit))
-    const rawMarketValue = round(
-      toNumber(mirror.availableAmount) ||
-        toNumber(mirror.initialInvestment) + rawPnl
+    const rawPnl = round(
+      resolveMirrorUnrealizedPnl(mirror) + toNumber(mirror.closedPositionsNetProfit)
     )
+    const rawMarketValue = round(resolveMirrorValue(mirror).value)
     const marketValue = convertBrokerAmount(rawMarketValue, fxContext)
 
     return {
@@ -292,7 +404,12 @@ export function normalizeEtoroData(args: {
   const mirrorHoldings = normalizeMirrors(pnlClient.mirrors ?? [], args.fxContext)
   const holdings = aggregateHoldings([...directHoldings, ...mirrorHoldings])
   const holdingsValue = round(holdings.reduce((total, holding) => total + holding.market_value, 0))
-  const totalAccountValue = round(availableCash + holdingsValue)
+  const reconstructedTotalAccountValue = round(availableCash + holdingsValue)
+  const brokerReportedTotal = resolveBrokerReportedTotalAccountValue(pnlClient, args.fxContext)
+  const totalAccountValue = round(
+    brokerReportedTotal.value ?? reconstructedTotalAccountValue
+  )
+  const valuationSource = brokerReportedTotal.value !== null ? 'broker_reported' : 'reconstructed'
   const realizedPnl = convertBrokerAmount(
     (pnlClient.mirrors ?? []).reduce(
       (total, mirror) => total + toNumber(mirror.closedPositionsNetProfit),
@@ -330,6 +447,20 @@ export function normalizeEtoroData(args: {
         source: args.fxContext.source,
         referenceDate: args.fxContext.referenceDate,
         accountCurrencyId: pnlClient.accountCurrencyId ?? null,
+      },
+      brokerReportedTotalAccountValue: brokerReportedTotal.value,
+      reconstructedHoldingsValue: holdingsValue,
+      valuationSource,
+      mirrorCount: pnlClient.mirrors?.length ?? 0,
+      positionCount: pnlClient.positions?.length ?? 0,
+      valuation: {
+        brokerReportedTotalAccountValue: brokerReportedTotal.value,
+        brokerReportedTotalAccountValueSourceField: brokerReportedTotal.sourceField,
+        reconstructedHoldingsValue: holdingsValue,
+        reconstructedTotalAccountValue,
+        valuationSource,
+        mirrorCount: pnlClient.mirrors?.length ?? 0,
+        positionCount: pnlClient.positions?.length ?? 0,
       },
       normalizedAt: new Date().toISOString(),
     },
