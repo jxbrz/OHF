@@ -1,4 +1,5 @@
 import { normalizeEtoroData } from './normalizers'
+import { calculateCurrentUnitPrice } from '../../../shared/calculations/index'
 
 describe('eToro normalizer', () => {
   it('converts broker summary values into the fund currency while leaving quote prices untouched', () => {
@@ -36,7 +37,7 @@ describe('eToro normalizer', () => {
       brokerReportedTotalAccountValue: null,
       reconstructedHoldingsValue: 78.75,
       reconstructedTotalAccountValue: 86.25,
-      valuationSource: 'reconstructed',
+      valuationSource: 'reconstructed_from_positions_and_mirrors',
       mirrorCount: 0,
       positionCount: 1,
     })
@@ -137,8 +138,8 @@ describe('eToro normalizer', () => {
 
     expect(normalized.totalAccountValue).toBe(820)
     expect(normalized.holdings[0]).toMatchObject({
-      symbol: 'MIRROR-QuantumComputing',
-      instrument_name: 'CopyTrader: QuantumComputing',
+      symbol: 'QuantumComputing',
+      instrument_name: 'Smart Portfolio: QuantumComputing',
       market_value: 720,
       pnl: 12,
       allocation_pct: 0.878049,
@@ -218,10 +219,103 @@ describe('eToro normalizer', () => {
       brokerReportedTotalAccountValueSourceField: 'equity',
       reconstructedHoldingsValue: 408,
       reconstructedTotalAccountValue: 448,
-      valuationSource: 'broker_reported',
+      finalValuationSource: 'broker_reported',
       mirrorCount: 1,
       positionCount: 1,
     })
     expect(normalized.holdings.map((holding) => holding.market_value)).toEqual([400, 8])
+  })
+
+  it('reconstructs Smart Portfolio mirror value from nested mirror position exposure', () => {
+    const normalized = normalizeEtoroData({
+      pnl: {
+        clientPortfolio: {
+          credit: 67.6,
+          bonusCredit: 0,
+          positions: [
+            {
+              amount: 48,
+              mirrorID: 0,
+              unrealizedPnL: {
+                pnL: 1.28,
+                exposureInAccountCurrency: 49.28,
+              },
+            },
+            {
+              amount: 46.32,
+              mirrorID: 0,
+              unrealizedPnL: {
+                pnL: 2.96,
+                exposureInAccountCurrency: 49.28,
+              },
+            },
+          ],
+          mirrors: [
+            {
+              parentUsername: 'QuantumComputing',
+              mirrorID: 11454557,
+              availableAmount: 1.05,
+              initialInvestment: 500,
+              closedPositionsNetProfit: 0,
+              positions: [
+                {
+                  unrealizedPnL: {
+                    exposureInAccountCurrency: 100,
+                  },
+                },
+                {
+                  unrealizedPnL: {
+                    exposureInAccountCurrency: 120,
+                  },
+                },
+                {
+                  unrealizedPnL: {
+                    exposureInAccountCurrency: 140,
+                  },
+                },
+                {
+                  unrealizedPnL: {
+                    exposureInAccountCurrency: 142.79,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+      fxContext: {
+        brokerCurrency: 'USD',
+        fundCurrency: 'GBP',
+        rate: 0.75,
+        source: 'manual_override',
+        referenceDate: null,
+      },
+    })
+
+    const quantumHolding = normalized.holdings.find(
+      (holding) => holding.symbol === 'QuantumComputing'
+    )
+
+    expect(quantumHolding).toMatchObject({
+      instrument_name: 'Smart Portfolio: QuantumComputing',
+      market_value: 377.0925,
+    })
+    expect(quantumHolding?.market_value).not.toBe(0.7875)
+    expect(normalized.totalAccountValue).toBe(501.7125)
+    expect(calculateCurrentUnitPrice(normalized.totalAccountValue, 250, 1)).toBe(2.00685)
+    expect(normalized.rawJson.valuation).toMatchObject({
+      creditUsd: 67.6,
+      directPositionsUsd: 98.56,
+      mirrorValuesUsd: 502.79,
+      mirrorNestedExposureUsd: 502.79,
+      reconstructedTotalUsd: 668.95,
+      reconstructedTotalGbp: 501.7125,
+      finalTotalAccountValue: 501.7125,
+      finalValuationSource: 'reconstructed_from_positions_and_mirrors',
+      mirrorCount: 1,
+      positionCount: 2,
+      directPositionCount: 2,
+      nestedMirrorPositionCount: 4,
+    })
   })
 })
