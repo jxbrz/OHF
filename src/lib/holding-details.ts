@@ -8,6 +8,8 @@ interface SnapshotRawPosition {
   positionID?: number
   instrumentID?: number
   instrumentId?: number
+  mirrorID?: number | string | null
+  mirrorId?: number | string | null
   symbol?: string
   isBuy?: boolean
   units?: number | string | null
@@ -88,6 +90,9 @@ function extractPositions(snapshot: Tables<'portfolio_snapshots'> | null) {
   return positions
     .filter((item) => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
     .map((item) => item as unknown as SnapshotRawPosition)
+    // Mirror-linked raw positions are Smart Portfolio look-through risk data,
+    // not standalone accounting lots for the holding detail view.
+    .filter((position) => toNumber(position.mirrorID ?? position.mirrorId, 0) <= 0)
 }
 
 function extractBrokerToFundRate(snapshot: Tables<'portfolio_snapshots'> | null) {

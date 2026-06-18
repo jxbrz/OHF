@@ -2,6 +2,8 @@ import {
   buildMemberHistorySeries,
   buildMemberLotSummary,
   buildMemberSummaries,
+  buildHoldingsAllocation,
+  buildHoldingsRows,
   buildSnapshotSeries,
   calculateCurrentUnitPrice,
   calculateMemberUnitsAsOf,
@@ -13,6 +15,7 @@ import {
   resolveSnapshotAsOf,
   resolveSuggestedUnitPriceAtDate,
   type FundTransactionLike,
+  type HoldingSnapshotLike,
   type MemberLike,
   type PortfolioSnapshotLike,
 } from './index'
@@ -489,6 +492,45 @@ describe('shared calculations', () => {
 
     expect(points[0]?.capturedAt).toBe('2025-12-01T00:00:00.000Z')
     expect(points[1]?.totalAccountValue).toBe(180)
+  })
+
+  it('builds holdings rows and allocation from accounting holdings, not look-through exposure', () => {
+    const accountingHoldings: HoldingSnapshotLike[] = [
+      {
+        id: 'direct-holding',
+        portfolio_snapshot_id: 'snapshot-smart',
+        symbol: 'DIRECT',
+        instrument_name: 'Direct Holding',
+        quantity: 1,
+        average_open: 200,
+        current_price: 200,
+        market_value: 200,
+        pnl: 0,
+        allocation_pct: 200 / 750,
+      },
+      {
+        id: 'smart-portfolio',
+        portfolio_snapshot_id: 'snapshot-smart',
+        symbol: 'QuantumComputing',
+        instrument_name: 'Smart Portfolio: QuantumComputing',
+        quantity: null,
+        average_open: null,
+        current_price: null,
+        market_value: 500,
+        pnl: 0,
+        allocation_pct: 500 / 750,
+      },
+    ]
+
+    const rows = buildHoldingsRows(accountingHoldings)
+    const allocation = buildHoldingsAllocation(accountingHoldings)
+
+    expect(rows.reduce((total, holding) => total + holding.marketValue, 0)).toBe(700)
+    expect(allocation).toEqual([
+      { name: 'QuantumComputing', value: 66.6667 },
+      { name: 'DIRECT', value: 26.6667 },
+    ])
+    expect(allocation.find((item) => item.name === 'INNER')).toBeUndefined()
   })
 
   it('builds a member-specific value series across snapshots', () => {

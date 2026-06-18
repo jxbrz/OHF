@@ -158,6 +158,7 @@ This repo includes [`vercel.json`](/c:/Users/Stanl/OHF/vercel.json) so Vercel wi
 - Live validation now checks `GET /api/v1/me` before using the real-account portfolio endpoint, and the sync reads the official `GET /api/v1/trading/info/real/pnl` payload for positions, credit, and PnL.
 - Broker quote fields such as `openRate` and `closeRate` stay in USD for holdings display, while account summaries, holding market values, P&L, and unit price are converted into the configured fund currency during sync.
 - `holding_snapshots.market_value` means actual account equity/value, not leveraged notional exposure. eToro exposure fields are kept separately in sync debug metadata as risk data and must not feed NAV, allocation, or unit price accounting.
+- Smart Portfolios/mirrors are stored as one NAV-affecting holding each. Nested mirror positions are only retained under `raw_json.valuation.smartPortfolioLookthrough` as synthetic look-through risk/transparency data.
 - If no manual broker-to-fund FX override is configured, the sync fetches the latest official ECB reference rates and stores the applied FX metadata inside each snapshot.
 - If live credentials are missing, or mock mode is enabled, the sync falls back to deterministic mock data.
 - Admins can trigger the sync from the `/admin` page. Each sync stores one `portfolio_snapshots` row plus its `holding_snapshots`.
