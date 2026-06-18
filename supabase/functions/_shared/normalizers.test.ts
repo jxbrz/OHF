@@ -146,6 +146,243 @@ describe('eToro normalizer', () => {
     })
   })
 
+  it('values a flat leveraged position from stake plus zero PnL, not notional exposure', () => {
+    const normalized = normalizeEtoroData({
+      pnl: {
+        clientPortfolio: {
+          positions: [
+            {
+              instrumentID: 1001,
+              amount: 100,
+              unrealizedPnL: {
+                pnL: 0,
+                exposureInAccountCurrency: 500,
+              },
+            },
+          ],
+        },
+      },
+      fxContext: {
+        brokerCurrency: 'USD',
+        fundCurrency: 'USD',
+        rate: 1,
+        source: 'same_currency',
+        referenceDate: null,
+      },
+    })
+
+    expect(normalized.holdings[0]).toMatchObject({
+      market_value: 100,
+      notional_exposure: 500,
+      leverage_multiple: 5,
+    })
+    expect(normalized.holdings[0]?.market_value).not.toBe(500)
+    expect(normalized.rawJson.valuation).toMatchObject({
+      directActualValueUsd: 100,
+      directNotionalExposureUsd: 500,
+      directPositionsUsd: 100,
+      reconstructedTotalUsd: 100,
+      finalTotalAccountValue: 100,
+    })
+  })
+
+  it('values a profitable leveraged position from stake plus PnL, not notional exposure', () => {
+    const normalized = normalizeEtoroData({
+      pnl: {
+        clientPortfolio: {
+          positions: [
+            {
+              instrumentID: 1001,
+              amount: 100,
+              unrealizedPnL: {
+                pnL: 10,
+                exposureInAccountCurrency: 550,
+              },
+            },
+          ],
+        },
+      },
+      fxContext: {
+        brokerCurrency: 'USD',
+        fundCurrency: 'USD',
+        rate: 1,
+        source: 'same_currency',
+        referenceDate: null,
+      },
+    })
+
+    expect(normalized.holdings[0]).toMatchObject({
+      market_value: 110,
+      notional_exposure: 550,
+      pnl: 10,
+    })
+    expect(normalized.holdings[0]?.market_value).not.toBe(550)
+    expect(normalized.rawJson.valuation).toMatchObject({
+      directActualValueUsd: 110,
+      directNotionalExposureUsd: 550,
+      reconstructedTotalUsd: 110,
+      finalTotalAccountValue: 110,
+    })
+  })
+
+  it('reconstructs total account value from cash plus actual leveraged position value', () => {
+    const normalized = normalizeEtoroData({
+      pnl: {
+        clientPortfolio: {
+          credit: 50,
+          positions: [
+            {
+              instrumentID: 1001,
+              amount: 100,
+              unrealizedPnL: {
+                pnL: 0,
+                exposureInAccountCurrency: 500,
+              },
+            },
+          ],
+        },
+      },
+      fxContext: {
+        brokerCurrency: 'USD',
+        fundCurrency: 'USD',
+        rate: 1,
+        source: 'same_currency',
+        referenceDate: null,
+      },
+    })
+
+    expect(normalized.totalAccountValue).toBe(150)
+    expect(normalized.totalAccountValue).not.toBe(550)
+    expect(normalized.rawJson.valuation).toMatchObject({
+      creditUsd: 50,
+      directActualValueUsd: 100,
+      directNotionalExposureUsd: 500,
+      reconstructedTotalUsd: 150,
+      finalTotalAccountValue: 150,
+    })
+  })
+
+  it('uses explicit Smart Portfolio value before nested leveraged notional exposure', () => {
+    const normalized = normalizeEtoroData({
+      pnl: {
+        clientPortfolio: {
+          mirrors: [
+            {
+              mirrorId: 42,
+              parentUsername: 'QuantumComputing',
+              currentValue: 220,
+              equity: 215,
+              positions: [
+                {
+                  amount: 100,
+                  unrealizedPnL: {
+                    pnL: 10,
+                    exposureInAccountCurrency: 550,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+      fxContext: {
+        brokerCurrency: 'USD',
+        fundCurrency: 'USD',
+        rate: 1,
+        source: 'same_currency',
+        referenceDate: null,
+      },
+    })
+
+    expect(normalized.totalAccountValue).toBe(220)
+    expect(normalized.holdings[0]).toMatchObject({
+      symbol: 'QuantumComputing',
+      market_value: 220,
+      notional_exposure: 550,
+    })
+    expect(normalized.holdings[0]?.market_value).not.toBe(550)
+    expect(normalized.rawJson.valuation).toMatchObject({
+      mirrorActualValueUsd: 220,
+      mirrorNotionalExposureUsd: 550,
+      mirrorNestedActualValueUsd: 110,
+      reconstructedTotalUsd: 220,
+    })
+  })
+
+  it('falls back to nested Smart Portfolio actual values, not nested notional exposure', () => {
+    const normalized = normalizeEtoroData({
+      pnl: {
+        clientPortfolio: {
+          mirrors: [
+            {
+              mirrorId: 42,
+              parentUsername: 'QuantumComputing',
+              positions: [
+                {
+                  amount: 100,
+                  unrealizedPnL: {
+                    pnL: 10,
+                    exposureInAccountCurrency: 550,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+      fxContext: {
+        brokerCurrency: 'USD',
+        fundCurrency: 'USD',
+        rate: 1,
+        source: 'same_currency',
+        referenceDate: null,
+      },
+    })
+
+    expect(normalized.totalAccountValue).toBe(110)
+    expect(normalized.holdings[0]).toMatchObject({
+      market_value: 110,
+      notional_exposure: 550,
+    })
+    expect(normalized.holdings[0]?.market_value).not.toBe(550)
+    expect(normalized.rawJson.valuation).toMatchObject({
+      mirrorActualValueUsd: 110,
+      mirrorNotionalExposureUsd: 550,
+      mirrorNestedActualValueUsd: 110,
+      reconstructedTotalUsd: 110,
+    })
+  })
+
+  it('uses actual reconstructed account value for unit price regression', () => {
+    const normalized = normalizeEtoroData({
+      pnl: {
+        clientPortfolio: {
+          credit: 50,
+          positions: [
+            {
+              instrumentID: 1001,
+              amount: 100,
+              unrealizedPnL: {
+                pnL: 0,
+                exposureInAccountCurrency: 500,
+              },
+            },
+          ],
+        },
+      },
+      fxContext: {
+        brokerCurrency: 'USD',
+        fundCurrency: 'USD',
+        rate: 1,
+        source: 'same_currency',
+        referenceDate: null,
+      },
+    })
+
+    expect(calculateCurrentUnitPrice(normalized.totalAccountValue, 100, 1)).toBe(1.5)
+    expect(calculateCurrentUnitPrice(normalized.totalAccountValue, 100, 1)).not.toBe(5.5)
+  })
+
   it('does not treat mirror availableAmount as the market value when investment and pnl are present', () => {
     const normalized = normalizeEtoroData({
       pnl: {
@@ -226,7 +463,7 @@ describe('eToro normalizer', () => {
     expect(normalized.holdings.map((holding) => holding.market_value)).toEqual([400, 8])
   })
 
-  it('reconstructs Smart Portfolio mirror value from nested mirror position exposure', () => {
+  it('keeps nested mirror notional exposure out of Smart Portfolio actual value', () => {
     const normalized = normalizeEtoroData({
       pnl: {
         clientPortfolio: {
@@ -298,21 +535,26 @@ describe('eToro normalizer', () => {
 
     expect(quantumHolding).toMatchObject({
       instrument_name: 'Smart Portfolio: QuantumComputing',
-      market_value: 377.0925,
+      market_value: 375,
+      notional_exposure: 377.0925,
     })
-    expect(quantumHolding?.market_value).not.toBe(0.7875)
-    expect(normalized.totalAccountValue).toBe(501.7125)
-    expect(calculateCurrentUnitPrice(normalized.totalAccountValue, 250, 1)).toBe(2.00685)
+    expect(quantumHolding?.market_value).not.toBe(377.0925)
+    expect(normalized.totalAccountValue).toBe(499.62)
+    expect(calculateCurrentUnitPrice(normalized.totalAccountValue, 250, 1)).toBe(1.99848)
     expect(normalized.rawJson.debugVersion).toBe(ETORO_NORMALIZER_VERSION)
     expect(normalized.rawJson.valuation).toMatchObject({
       debugVersion: ETORO_NORMALIZER_VERSION,
       creditUsd: 67.6,
+      directActualValueUsd: 98.56,
+      directNotionalExposureUsd: 98.56,
       directPositionsUsd: 98.56,
-      mirrorValuesUsd: 502.79,
-      mirrorNestedExposureUsd: 502.79,
-      reconstructedTotalUsd: 668.95,
-      reconstructedTotalGbp: 501.7125,
-      finalTotalAccountValue: 501.7125,
+      mirrorActualValueUsd: 500,
+      mirrorNotionalExposureUsd: 502.79,
+      mirrorValuesUsd: 500,
+      mirrorNestedActualValueUsd: 0,
+      reconstructedTotalUsd: 666.16,
+      reconstructedTotalGbp: 499.62,
+      finalTotalAccountValue: 499.62,
       finalValuationSource: 'reconstructed_from_positions_and_mirrors',
       mirrorCount: 1,
       positionCount: 2,

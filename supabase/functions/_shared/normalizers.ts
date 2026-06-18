@@ -1,6 +1,6 @@
 type NumericValue = number | string | null | undefined
 
-export const ETORO_NORMALIZER_VERSION = 'smart-portfolio-nested-positions-v3'
+export const ETORO_NORMALIZER_VERSION = 'leveraged-position-equity-v4'
 
 interface RawPosition {
   positionId?: number
@@ -95,6 +95,8 @@ export interface NormalizedHolding {
   average_open: number | null
   current_price: number | null
   market_value: number
+  notional_exposure?: number
+  leverage_multiple?: number | null
   pnl: number
   allocation_pct: number
 }
@@ -118,6 +120,7 @@ interface HoldingAggregationState {
   currentPriceWeightedTotal: number
   currentPriceCount: number
   market_value: number
+  notional_exposure: number
   pnl: number
 }
 
@@ -130,7 +133,8 @@ interface BrokerTotalResolution {
 interface MirrorValueResolution {
   value: number
   source: 'nested_positions' | 'explicit_value' | 'initial_investment_plus_pnl' | 'available_amount'
-  nestedExposure: number
+  nestedActualValue: number
+  nestedNotionalExposure: number
   nestedPositionCount: number
 }
 
@@ -197,21 +201,39 @@ function resolveBrokerReportedTotalAccountValue(
   }
 }
 
-function getPositionExposureUsd(position: RawPosition): number {
-  const exposureInAccountCurrency = toNumber(
-    position.unrealizedPnL?.exposureInAccountCurrency,
-    Number.NaN
-  )
+function getPositionPnlUsd(position: RawPosition): number {
+  return round(toNumber(position.unrealizedPnL?.pnL ?? position.pnL))
+}
 
-  if (Number.isFinite(exposureInAccountCurrency) && exposureInAccountCurrency > 0) {
-    return round(exposureInAccountCurrency)
+function resolvePositionBaseAmountUsd(position: RawPosition): number | null {
+  const candidates = [
+    position.amount,
+    position.unitsBaseValueDollars,
+    position.initialAmountInDollars,
+    position.unrealizedPnL?.marginInAccountCurrency,
+  ]
+
+  for (const candidate of candidates) {
+    const value = toNumber(candidate, Number.NaN)
+
+    if (Number.isFinite(value) && value >= 0) {
+      return value
+    }
   }
 
-  const amount = toNumber(position.amount)
-  const pnl = toNumber(position.unrealizedPnL?.pnL ?? position.pnL)
+  return null
+}
 
-  if (amount !== 0 || pnl !== 0) {
-    return round(amount + pnl)
+function getPositionActualValueUsd(position: RawPosition): number {
+  const pnl = getPositionPnlUsd(position)
+  const baseAmount = resolvePositionBaseAmountUsd(position)
+
+  if (baseAmount !== null) {
+    return round(baseAmount + pnl)
+  }
+
+  if (getPositionNotionalExposureUsd(position) > 0) {
+    return pnl !== 0 ? pnl : 0
   }
 
   const units = toNumber(position.units)
@@ -223,6 +245,19 @@ function getPositionExposureUsd(position: RawPosition): number {
 
   if (units > 0 && closeRate > 0 && closeConversionRate > 0) {
     return round(units * closeRate * closeConversionRate)
+  }
+
+  return pnl !== 0 ? pnl : 0
+}
+
+function getPositionNotionalExposureUsd(position: RawPosition): number {
+  const exposureInAccountCurrency = toNumber(
+    position.unrealizedPnL?.exposureInAccountCurrency,
+    Number.NaN
+  )
+
+  if (Number.isFinite(exposureInAccountCurrency) && exposureInAccountCurrency > 0) {
+    return round(exposureInAccountCurrency)
   }
 
   return 0
@@ -242,18 +277,12 @@ function resolveMirrorUnrealizedPnl(mirror: RawMirror) {
 
 function resolveMirrorValue(mirror: RawMirror): MirrorValueResolution {
   const nestedPositions = Array.isArray(mirror.positions) ? mirror.positions : []
-  const nestedExposure = round(
-    nestedPositions.reduce((total, position) => total + getPositionExposureUsd(position), 0)
+  const nestedActualValue = round(
+    nestedPositions.reduce((total, position) => total + getPositionActualValueUsd(position), 0)
   )
-
-  if (nestedExposure > 0) {
-    return {
-      value: nestedExposure,
-      source: 'nested_positions',
-      nestedExposure,
-      nestedPositionCount: nestedPositions.length,
-    }
-  }
+  const nestedNotionalExposure = round(
+    nestedPositions.reduce((total, position) => total + getPositionNotionalExposureUsd(position), 0)
+  )
 
   const explicitValue = pickFirstNonNegativeNumber(mirror, [
     'currentValue',
@@ -268,7 +297,8 @@ function resolveMirrorValue(mirror: RawMirror): MirrorValueResolution {
     return {
       value: explicitValue.value,
       source: 'explicit_value',
-      nestedExposure,
+      nestedActualValue,
+      nestedNotionalExposure,
       nestedPositionCount: nestedPositions.length,
     }
   }
@@ -281,7 +311,18 @@ function resolveMirrorValue(mirror: RawMirror): MirrorValueResolution {
     return {
       value: initialInvestment + unrealizedPnl + closedPositionsNetProfit,
       source: 'initial_investment_plus_pnl',
-      nestedExposure,
+      nestedActualValue,
+      nestedNotionalExposure,
+      nestedPositionCount: nestedPositions.length,
+    }
+  }
+
+  if (nestedActualValue > 0) {
+    return {
+      value: nestedActualValue,
+      source: 'nested_positions',
+      nestedActualValue,
+      nestedNotionalExposure,
       nestedPositionCount: nestedPositions.length,
     }
   }
@@ -289,7 +330,8 @@ function resolveMirrorValue(mirror: RawMirror): MirrorValueResolution {
   return {
     value: toNumber(mirror.availableAmount),
     source: 'available_amount',
-    nestedExposure,
+    nestedActualValue,
+    nestedNotionalExposure,
     nestedPositionCount: nestedPositions.length,
   }
 }
@@ -317,26 +359,16 @@ function normalizePositions(
     const quantity = toNumber(position.units)
     const averageOpen = toNumber(position.openRate)
     const currentPrice = toNumber(position.unrealizedPnL?.closeRate ?? position.closeRate)
-    const rawPnl = round(toNumber(position.unrealizedPnL?.pnL ?? position.pnL))
+    const rawPnl = getPositionPnlUsd(position)
     const pnl = convertBrokerAmount(rawPnl, fxContext)
-    const amount = toNumber(position.amount)
-    const unitsBaseValue = toNumber(position.unitsBaseValueDollars)
-    const initialAmount = toNumber(position.initialAmountInDollars)
-    const exposure = getPositionExposureUsd(position)
-    const rawMarketValue = round(
-      exposure > 0
-        ? exposure
-        : amount !== 0
-        ? amount + rawPnl
-        : unitsBaseValue > 0
-          ? unitsBaseValue + rawPnl
-          : initialAmount > 0
-            ? initialAmount + rawPnl
-            : quantity > 0 && currentPrice > 0
-              ? quantity * currentPrice
-              : rawPnl
-    )
+    const rawMarketValue = getPositionActualValueUsd(position)
+    const rawNotionalExposure = getPositionNotionalExposureUsd(position)
     const marketValue = convertBrokerAmount(rawMarketValue, fxContext)
+    const notionalExposure = convertBrokerAmount(rawNotionalExposure, fxContext)
+    const leverageMultiple =
+      rawNotionalExposure > 0 && rawMarketValue > 0
+        ? round(rawNotionalExposure / rawMarketValue)
+        : null
 
     return {
       symbol: position.symbol ?? metadata?.internalSymbolFull ?? `ID-${instrumentId}`,
@@ -348,6 +380,8 @@ function normalizePositions(
       average_open: averageOpen || null,
       current_price: currentPrice || null,
       market_value: marketValue,
+      notional_exposure: notionalExposure > 0 ? notionalExposure : undefined,
+      leverage_multiple: leverageMultiple,
       pnl,
       allocation_pct: 0,
     }
@@ -362,7 +396,13 @@ function normalizeMirrors(mirrors: RawMirror[], fxContext: FxContext): Normalize
       resolveMirrorUnrealizedPnl(mirror) + toNumber(mirror.closedPositionsNetProfit)
     )
     const rawMarketValue = round(mirrorValue.value)
+    const rawNotionalExposure = mirrorValue.nestedNotionalExposure
     const marketValue = convertBrokerAmount(rawMarketValue, fxContext)
+    const notionalExposure = convertBrokerAmount(rawNotionalExposure, fxContext)
+    const leverageMultiple =
+      rawNotionalExposure > 0 && rawMarketValue > 0
+        ? round(rawNotionalExposure / rawMarketValue)
+        : null
     const symbol = mirror.parentUsername ?? `MIRROR-${mirrorId}`
 
     return {
@@ -374,6 +414,8 @@ function normalizeMirrors(mirrors: RawMirror[], fxContext: FxContext): Normalize
       average_open: toNumber(mirror.initialInvestment) || null,
       current_price: null,
       market_value: marketValue,
+      notional_exposure: notionalExposure > 0 ? notionalExposure : undefined,
+      leverage_multiple: leverageMultiple,
       pnl: convertBrokerAmount(rawPnl, fxContext),
       allocation_pct: 0,
     }
@@ -405,6 +447,7 @@ function aggregateHoldings(holdings: NormalizedHolding[]): NormalizedHolding[] {
         currentPriceCount:
           holding.quantity !== null && holding.current_price !== null ? holding.quantity : 0,
         market_value: holding.market_value,
+        notional_exposure: holding.notional_exposure ?? 0,
         pnl: holding.pnl,
       })
       continue
@@ -412,6 +455,9 @@ function aggregateHoldings(holdings: NormalizedHolding[]): NormalizedHolding[] {
 
     existing.instrument_name = existing.instrument_name ?? holding.instrument_name
     existing.market_value = round(existing.market_value + holding.market_value)
+    existing.notional_exposure = round(
+      existing.notional_exposure + (holding.notional_exposure ?? 0)
+    )
     existing.pnl = round(existing.pnl + holding.pnl)
 
     if (holding.quantity !== null) {
@@ -436,22 +482,30 @@ function aggregateHoldings(holdings: NormalizedHolding[]): NormalizedHolding[] {
     }
   }
 
-  return [...grouped.values()].map((holding) => ({
-    symbol: holding.symbol,
-    instrument_name: holding.instrument_name,
-    quantity: holding.quantityCount > 0 ? round(holding.quantityTotal, 8) : null,
-    average_open:
-      holding.averageOpenCount > 0
-        ? round(holding.averageOpenWeightedTotal / holding.averageOpenCount, 8)
-        : null,
-    current_price:
-      holding.currentPriceCount > 0
-        ? round(holding.currentPriceWeightedTotal / holding.currentPriceCount, 8)
-        : null,
-    market_value: round(holding.market_value),
-    pnl: round(holding.pnl),
-    allocation_pct: 0,
-  }))
+  return [...grouped.values()].map((holding) => {
+    const marketValue = round(holding.market_value)
+    const notionalExposure = round(holding.notional_exposure)
+
+    return {
+      symbol: holding.symbol,
+      instrument_name: holding.instrument_name,
+      quantity: holding.quantityCount > 0 ? round(holding.quantityTotal, 8) : null,
+      average_open:
+        holding.averageOpenCount > 0
+          ? round(holding.averageOpenWeightedTotal / holding.averageOpenCount, 8)
+          : null,
+      current_price:
+        holding.currentPriceCount > 0
+          ? round(holding.currentPriceWeightedTotal / holding.currentPriceCount, 8)
+          : null,
+      market_value: marketValue,
+      notional_exposure: notionalExposure > 0 ? notionalExposure : undefined,
+      leverage_multiple:
+        notionalExposure > 0 && marketValue > 0 ? round(notionalExposure / marketValue) : null,
+      pnl: round(holding.pnl),
+      allocation_pct: 0,
+    }
+  })
 }
 
 export function normalizeEtoroData(args: {
@@ -469,18 +523,32 @@ export function normalizeEtoroData(args: {
     args.fxContext
   )
   const creditUsd = round(toNumber(pnlClient.credit) + toNumber(pnlClient.bonusCredit))
-  const directPositionsUsd = round(
+  const directActualValueUsd = round(
     (pnlClient.positions ?? []).reduce(
-      (total, position) => total + getPositionExposureUsd(position),
+      (total, position) => total + getPositionActualValueUsd(position),
       0
     )
   )
+  const directNotionalExposureUsd = round(
+    (pnlClient.positions ?? []).reduce(
+      (total, position) => total + getPositionNotionalExposureUsd(position),
+      0
+    )
+  )
+  const directPositionsUsd = directActualValueUsd
   const mirrorValueResolutions = (pnlClient.mirrors ?? []).map(resolveMirrorValue)
-  const mirrorValuesUsd = round(
+  const mirrorActualValueUsd = round(
     mirrorValueResolutions.reduce((total, mirrorValue) => total + mirrorValue.value, 0)
   )
-  const mirrorNestedExposureUsd = round(
-    mirrorValueResolutions.reduce((total, mirrorValue) => total + mirrorValue.nestedExposure, 0)
+  const mirrorNotionalExposureUsd = round(
+    mirrorValueResolutions.reduce(
+      (total, mirrorValue) => total + mirrorValue.nestedNotionalExposure,
+      0
+    )
+  )
+  const mirrorValuesUsd = mirrorActualValueUsd
+  const mirrorNestedActualValueUsd = round(
+    mirrorValueResolutions.reduce((total, mirrorValue) => total + mirrorValue.nestedActualValue, 0)
   )
   const nestedMirrorPositionCount = mirrorValueResolutions.reduce(
     (total, mirrorValue) => total + mirrorValue.nestedPositionCount,
@@ -559,9 +627,13 @@ export function normalizeEtoroData(args: {
         brokerReportedTotalAccountValueUsd: brokerReportedTotal.valueUsd,
         brokerReportedTotalAccountValueSourceField: brokerReportedTotal.sourceField,
         creditUsd,
+        directActualValueUsd,
+        directNotionalExposureUsd,
         directPositionsUsd,
+        mirrorActualValueUsd,
+        mirrorNotionalExposureUsd,
         mirrorValuesUsd,
-        mirrorNestedExposureUsd,
+        mirrorNestedActualValueUsd,
         reconstructedTotalUsd,
         reconstructedTotalGbp: reconstructedTotalAccountValue,
         finalTotalAccountValue: totalAccountValue,
