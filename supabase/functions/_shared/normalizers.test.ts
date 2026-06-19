@@ -141,8 +141,183 @@ describe('eToro normalizer', () => {
       symbol: 'QuantumComputing',
       instrument_name: 'Smart Portfolio: QuantumComputing',
       market_value: 720,
-      pnl: 12,
+      pnl: 220,
       allocation_pct: 0.878049,
+    })
+  })
+
+  it('resolves Smart Portfolio PnL from explicit current value minus initial investment', () => {
+    const normalized = normalizeEtoroData({
+      pnl: {
+        clientPortfolio: {
+          mirrors: [
+            {
+              mirrorId: 42,
+              parentUsername: 'QuantumComputing',
+              currentValue: 494.4,
+              initialInvestment: 500,
+            },
+          ],
+        },
+      },
+      fxContext: {
+        brokerCurrency: 'USD',
+        fundCurrency: 'USD',
+        rate: 1,
+        source: 'same_currency',
+        referenceDate: null,
+      },
+    })
+
+    expect(normalized.holdings).toHaveLength(1)
+    expect(normalized.holdings[0]).toMatchObject({
+      symbol: 'QuantumComputing',
+      market_value: 494.4,
+      pnl: -5.6,
+    })
+    expect(normalized.rawJson.valuation).toMatchObject({
+      smartPortfolioActualValueUsd: 494.4,
+      smartPortfolioValueSource: 'explicit_currentValue',
+      smartPortfolioPnlUsd: -5.6,
+      smartPortfolioPnlSource: 'resolvedValue_minus_invested',
+      smartPortfolioInvestedUsd: 500,
+      smartPortfolioInvestedSource: 'initialInvestment',
+      smartPortfolioValueMinusInvestedUsd: -5.6,
+      smartPortfolioMirrors: [
+        expect.objectContaining({
+          symbol: 'QuantumComputing',
+          resolvedValueUsd: 494.4,
+          resolvedValueSource: 'explicit_currentValue',
+          resolvedPnlUsd: -5.6,
+          resolvedPnlSource: 'resolvedValue_minus_invested',
+          investedUsd: 500,
+          investedSource: 'initialInvestment',
+        }),
+      ],
+    })
+  })
+
+  it('resolves Smart Portfolio value from initial investment plus explicit PnL', () => {
+    const normalized = normalizeEtoroData({
+      pnl: {
+        clientPortfolio: {
+          mirrors: [
+            {
+              mirrorId: 42,
+              parentUsername: 'QuantumComputing',
+              initialInvestment: 500,
+              pnl: -5.6,
+            },
+          ],
+        },
+      },
+      fxContext: {
+        brokerCurrency: 'USD',
+        fundCurrency: 'USD',
+        rate: 1,
+        source: 'same_currency',
+        referenceDate: null,
+      },
+    })
+
+    expect(normalized.holdings[0]).toMatchObject({
+      market_value: 494.4,
+      pnl: -5.6,
+    })
+    expect(normalized.rawJson.valuation).toMatchObject({
+      smartPortfolioActualValueUsd: 494.4,
+      smartPortfolioValueSource: 'initialInvestment_plus_explicit_pnl',
+      smartPortfolioPnlUsd: -5.6,
+      smartPortfolioPnlSource: 'explicit_pnl',
+      smartPortfolioInvestedUsd: 500,
+      smartPortfolioInvestedSource: 'initialInvestment',
+    })
+  })
+
+  it('resolves Smart Portfolio PnL from nested actual fallback minus initial investment', () => {
+    const normalized = normalizeEtoroData({
+      pnl: {
+        clientPortfolio: {
+          mirrors: [
+            {
+              mirrorId: 42,
+              parentUsername: 'QuantumComputing',
+              initialInvestment: 500,
+              positions: [
+                {
+                  amount: 500,
+                  unrealizedPnL: {
+                    pnL: -5.6,
+                    exposureInAccountCurrency: 900,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+      fxContext: {
+        brokerCurrency: 'USD',
+        fundCurrency: 'USD',
+        rate: 1,
+        source: 'same_currency',
+        referenceDate: null,
+      },
+    })
+
+    expect(normalized.holdings[0]).toMatchObject({
+      market_value: 494.4,
+      notional_exposure: 900,
+      pnl: -5.6,
+    })
+    expect(normalized.rawJson.valuation).toMatchObject({
+      smartPortfolioActualValueUsd: 494.4,
+      smartPortfolioValueSource: 'nested_actual_values',
+      smartPortfolioPnlUsd: -5.6,
+      smartPortfolioPnlSource: 'nestedActualValue_minus_invested',
+      smartPortfolioInvestedUsd: 500,
+      smartPortfolioNestedActualValueUsd: 494.4,
+      smartPortfolioNestedNotionalExposureUsd: 900,
+    })
+  })
+
+  it('keeps explicit zero Smart Portfolio PnL as explicit rather than defaulted', () => {
+    const normalized = normalizeEtoroData({
+      pnl: {
+        clientPortfolio: {
+          mirrors: [
+            {
+              mirrorId: 42,
+              parentUsername: 'QuantumComputing',
+              initialInvestment: 500,
+              pnl: 0,
+            },
+          ],
+        },
+      },
+      fxContext: {
+        brokerCurrency: 'USD',
+        fundCurrency: 'USD',
+        rate: 1,
+        source: 'same_currency',
+        referenceDate: null,
+      },
+    })
+
+    expect(normalized.holdings[0]).toMatchObject({
+      market_value: 500,
+      pnl: 0,
+    })
+    expect(normalized.rawJson.valuation).toMatchObject({
+      smartPortfolioPnlUsd: 0,
+      smartPortfolioPnlSource: 'explicit_pnl',
+      smartPortfolioMirrors: [
+        expect.objectContaining({
+          resolvedPnlUsd: 0,
+          resolvedPnlSource: 'explicit_pnl',
+          pnlDefaulted: false,
+        }),
+      ],
     })
   })
 
@@ -682,6 +857,7 @@ describe('eToro normalizer', () => {
               mirrorID: 11454557,
               availableAmount: 1.05,
               initialInvestment: 500,
+              currentValue: 500,
               closedPositionsNetProfit: 0,
               positions: [
                 {
