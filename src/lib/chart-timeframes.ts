@@ -1,6 +1,6 @@
 import type { SnapshotChartPoint } from '@/types/app'
 
-export type ChartTimeframe = 'day' | 'week' | 'month'
+export type ChartTimeframe = 'day' | 'week' | 'month' | 'quarter'
 
 export interface TimeframedSnapshotPoint extends SnapshotChartPoint {
   capturedAtMs: number
@@ -42,6 +42,14 @@ export const TIMEFRAME_WINDOWS: Record<ChartTimeframe, TimeframeWindow> = {
     changeLabel: 'this month',
     tickUnitLabel: 'day',
     durationMs: 30 * DAY_MS,
+  },
+  quarter: {
+    timeframe: 'quarter',
+    label: '3 Months',
+    shortLabel: '3M',
+    changeLabel: 'over the last 3 months',
+    tickUnitLabel: 'day',
+    durationMs: 90 * DAY_MS,
   },
 }
 

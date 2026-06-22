@@ -47,4 +47,34 @@ describe('getTimeframeChangeSummary', () => {
     expect(summary?.changeAmount).toBeCloseTo(0.05, 10)
     expect(summary?.changePct).toBeCloseTo(0.05, 10)
   })
+
+  it('uses a 90-day baseline for the 3 month timeframe', () => {
+    const summary = getTimeframeChangeSummary(
+      [
+        {
+          capturedAt: '2026-01-03T12:00:00.000Z',
+          totalAccountValue: 100,
+          unitPrice: 1,
+        },
+        {
+          capturedAt: '2026-01-10T12:00:00.000Z',
+          totalAccountValue: 110,
+          unitPrice: 1.1,
+        },
+        {
+          capturedAt: '2026-04-05T12:00:00.000Z',
+          totalAccountValue: 120,
+          unitPrice: 1.2,
+        },
+      ],
+      'quarter'
+    )
+
+    expect(summary).toMatchObject({
+      baselineAt: '2026-01-10T12:00:00.000Z',
+      latestAt: '2026-04-05T12:00:00.000Z',
+    })
+    expect(summary?.changeAmount).toBeCloseTo(0.1, 10)
+    expect(summary?.changePct).toBeCloseTo(0.0909090909, 10)
+  })
 })
