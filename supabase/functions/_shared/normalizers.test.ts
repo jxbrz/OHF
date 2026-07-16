@@ -205,8 +205,9 @@ describe('eToro normalizer', () => {
             {
               mirrorId: 42,
               parentUsername: 'QuantumComputing',
-              initialInvestment: 500,
-              pnl: -5.6,
+              initialInvestment: 200,
+              pnl: 10,
+              availableAmount: 5,
             },
           ],
         },
@@ -221,16 +222,23 @@ describe('eToro normalizer', () => {
     })
 
     expect(normalized.holdings[0]).toMatchObject({
-      market_value: 494.4,
-      pnl: -5.6,
+      market_value: 210,
+      pnl: 10,
     })
     expect(normalized.rawJson.valuation).toMatchObject({
-      smartPortfolioActualValueUsd: 494.4,
+      smartPortfolioActualValueUsd: 210,
       smartPortfolioValueSource: 'initialInvestment_plus_explicit_pnl',
-      smartPortfolioPnlUsd: -5.6,
+      smartPortfolioPnlUsd: 10,
       smartPortfolioPnlSource: 'explicit_pnl',
-      smartPortfolioInvestedUsd: 500,
+      smartPortfolioInvestedUsd: 200,
       smartPortfolioInvestedSource: 'initialInvestment',
+      mirrorDiagnostics: [
+        expect.objectContaining({
+          availableAmountUsd: 5,
+          resolvedValueUsd: 210,
+          resolvedValueSource: 'initialInvestment_plus_explicit_pnl',
+        }),
+      ],
     })
   })
 
@@ -262,19 +270,20 @@ describe('eToro normalizer', () => {
       },
     })
 
-    expect(normalized.totalAccountValue).toBe(502.79)
+    expect(normalized.totalAccountValue).toBe(503.84)
     expect(normalized.holdings[0]).toMatchObject({
       instrument_name: 'Smart Portfolio: QuantumComputing',
-      market_value: 502.79,
+      market_value: 503.84,
     })
     expect(normalized.rawJson.valuation).toMatchObject({
       mirrorDiagnostics: [
         expect.objectContaining({
           symbol: 'QuantumComputing',
           mirrorId: 42,
-          resolvedValueUsd: 502.79,
-          resolvedValueSource: 'nested_actual_values',
+          resolvedValueUsd: 503.84,
+          resolvedValueSource: 'nested_actual_values_plus_available_amount',
           nestedActualValueUsd: 502.79,
+          nestedPlusAvailableAmountUsd: 503.84,
           nestedPositionCount: 2,
           investedUsd: 500,
           availableAmountUsd: 1.05,
@@ -284,30 +293,24 @@ describe('eToro normalizer', () => {
     })
   })
 
-  it('values a copied trader from nested leveraged equity before invested plus PnL', () => {
+  it('adds copied-trader residual cash to nested actual equity', () => {
     const normalized = normalizeEtoroData({
       pnl: {
         clientPortfolio: {
           mirrors: [
             {
               mirrorId: 77,
-              parentUsername: 'CopiedTrader',
+              parentUsername: 'KeshavLohiya',
               type: 'CopyTrader',
-              initialInvestment: 200,
-              pnl: 10,
+              initialInvestment: 613.53,
+              pnl: -44.18,
+              availableAmount: 55.97,
               positions: [
                 {
                   unrealizedPnL: {
-                    marginInAccountCurrency: 90,
-                    pnL: 5,
-                    exposureInAccountCurrency: 150,
-                  },
-                },
-                {
-                  unrealizedPnL: {
-                    marginInAccountCurrency: 95,
-                    pnL: -5,
-                    exposureInAccountCurrency: 150,
+                    marginInAccountCurrency: 569.35,
+                    pnL: 0,
+                    exposureInAccountCurrency: 569.35,
                   },
                 },
               ],
@@ -324,22 +327,26 @@ describe('eToro normalizer', () => {
       },
     })
 
-    expect(normalized.totalAccountValue).toBe(185)
+    expect(normalized.totalAccountValue).toBe(625.32)
     expect(normalized.holdings[0]).toMatchObject({
-      instrument_name: 'Copy Trader: CopiedTrader',
-      market_value: 185,
-      notional_exposure: 300,
+      symbol: 'KeshavLohiya',
+      instrument_name: 'Copy Trader: KeshavLohiya',
+      market_value: 625.32,
+      notional_exposure: 569.35,
     })
-    expect(normalized.holdings[0]?.market_value).not.toBe(210)
+    expect(normalized.holdings[0]?.market_value).not.toBe(55.97)
     expect(normalized.rawJson.valuation).toMatchObject({
       mirrorDiagnostics: [
         expect.objectContaining({
-          resolvedValueUsd: 185,
-          resolvedValueSource: 'nested_actual_values',
-          nestedActualValueUsd: 185,
-          nestedNotionalExposureUsd: 300,
-          resolvedPnlUsd: 10,
-          valueMinusInvestedUsd: -15,
+          symbol: 'KeshavLohiya',
+          resolvedValueUsd: 625.32,
+          resolvedValueSource: 'nested_actual_values_plus_available_amount',
+          nestedActualValueUsd: 569.35,
+          availableAmountUsd: 55.97,
+          nestedPlusAvailableAmountUsd: 625.32,
+          nestedNotionalExposureUsd: 569.35,
+          resolvedPnlUsd: -44.18,
+          valueMinusInvestedUsd: 11.79,
         }),
       ],
     })

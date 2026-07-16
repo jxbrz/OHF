@@ -1,6 +1,6 @@
 type NumericValue = number | string | null | undefined
 
-export const ETORO_NORMALIZER_VERSION = 'mirror-actual-value-v7'
+export const ETORO_NORMALIZER_VERSION = 'mirror-actual-value-v8'
 
 interface RawPosition {
   positionId?: number
@@ -602,7 +602,9 @@ function getMirrorPnlUsd(
     const source =
       options?.resolvedValueSource === 'broker_total_residual'
         ? 'residualValue_minus_invested'
-        : options?.resolvedValueSource === 'nested_actual_values'
+        : options?.resolvedValueSource === 'nested_actual_values_plus_available_amount'
+          ? 'nestedActualValue_plus_availableAmount_minus_invested'
+          : options?.resolvedValueSource === 'nested_actual_values'
           ? 'nestedActualValue_minus_invested'
           : 'resolvedValue_minus_invested'
 
@@ -806,12 +808,19 @@ function resolveMirrorValues(args: {
     }
 
     if (inspection.nestedActualValue > 0) {
+      const availableAmount =
+        inspection.availableAmount !== null && inspection.availableAmount > 0
+          ? inspection.availableAmount
+          : 0
       resolved.set(
         inspection,
         buildMirrorValueResolution({
           inspection,
-          value: inspection.nestedActualValue,
-          source: 'nested_actual_values',
+          value: round(inspection.nestedActualValue + availableAmount),
+          source:
+            availableAmount > 0
+              ? 'nested_actual_values_plus_available_amount'
+              : 'nested_actual_values',
           residualValue: null,
         })
       )
@@ -1146,6 +1155,9 @@ export function normalizeEtoroData(args: {
     resolvedValueUsd: mirrorValue.value,
     resolvedValueSource: mirrorValue.source,
     nestedActualValueUsd: mirrorValue.nestedActualValue,
+    nestedPlusAvailableAmountUsd: round(
+      mirrorValue.nestedActualValue + (mirrorValue.availableAmountValue ?? 0)
+    ),
     nestedNotionalExposureUsd: mirrorValue.nestedNotionalExposure,
     nestedPositionCount: mirrorValue.nestedPositionCount,
     resolvedPnlUsd: mirrorValue.pnlValue,
