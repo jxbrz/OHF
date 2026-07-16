@@ -1,6 +1,6 @@
 type NumericValue = number | string | null | undefined
 
-export const ETORO_NORMALIZER_VERSION = 'smart-portfolio-pnl-v6'
+export const ETORO_NORMALIZER_VERSION = 'mirror-actual-value-v7'
 
 interface RawPosition {
   positionId?: number
@@ -34,6 +34,10 @@ interface RawMirror {
   mirrorId?: number
   mirrorID?: number
   parentUsername?: string
+  type?: NumericValue
+  mirrorType?: NumericValue
+  copyType?: NumericValue
+  portfolioType?: NumericValue
   positions?: RawPosition[]
   currentValue?: NumericValue
   value?: NumericValue
@@ -186,6 +190,7 @@ interface MirrorInspection {
   explicitValue: { value: number; field: string | null } | null
   explicitPnl: MirrorPnlResolution | null
   invested: MirrorInvestedResolution
+  availableAmount: number | null
   nestedPositions: RawPosition[]
   nestedActualValue: number
   nestedNotionalExposure: number
@@ -205,6 +210,7 @@ interface MirrorValueResolution {
   pnlDefaulted: boolean
   investedValue: number | null
   investedSource: string | null
+  availableAmountValue: number | null
   valueMinusInvested: number | null
   nestedActualValue: number
   nestedNotionalExposure: number
@@ -312,13 +318,13 @@ function getPositionPnlUsd(position: RawPosition): number {
 function resolvePositionActualValueUsd(position: RawPosition): PositionActualValueResolution {
   const pnl = getPositionPnlUsd(position)
   const candidates = [
-    { value: position.amount, source: 'amount_plus_pnl' },
-    { value: position.unitsBaseValueDollars, source: 'unitsBaseValueDollars_plus_pnl' },
-    { value: position.initialAmountInDollars, source: 'initialAmountInDollars_plus_pnl' },
     {
       value: position.unrealizedPnL?.marginInAccountCurrency,
       source: 'marginInAccountCurrency_plus_pnl',
     },
+    { value: position.amount, source: 'amount_plus_pnl' },
+    { value: position.unitsBaseValueDollars, source: 'unitsBaseValueDollars_plus_pnl' },
+    { value: position.initialAmountInDollars, source: 'initialAmountInDollars_plus_pnl' },
   ]
 
   for (const candidate of candidates) {
@@ -330,14 +336,6 @@ function resolvePositionActualValueUsd(position: RawPosition): PositionActualVal
         source: candidate.source,
         safelyKnown: true,
       }
-    }
-  }
-
-  if (resolvePositionNotionalExposureUsd(position).value > 0) {
-    return {
-      value: 0,
-      source: null,
-      safelyKnown: false,
     }
   }
 
@@ -357,8 +355,8 @@ function resolvePositionActualValueUsd(position: RawPosition): PositionActualVal
   }
 
   return {
-    value: pnl !== 0 ? pnl : 0,
-    source: pnl !== 0 ? 'pnl_only' : null,
+    value: 0,
+    source: pnl !== 0 ? 'pnl_only_unsafe' : null,
     safelyKnown: false,
   }
 }
@@ -375,10 +373,24 @@ function resolvePositionNotionalExposureUsd(
     Number.NaN
   )
 
-  if (Number.isFinite(exposureInAccountCurrency) && exposureInAccountCurrency > 0) {
+  if (Number.isFinite(exposureInAccountCurrency) && exposureInAccountCurrency >= 0) {
     return {
       value: round(exposureInAccountCurrency),
       source: 'unrealizedPnL.exposureInAccountCurrency',
+    }
+  }
+
+  const units = toNumber(position.units)
+  const closeRate = toNumber(position.unrealizedPnL?.closeRate ?? position.closeRate)
+  const closeConversionRate = toNumber(
+    position.unrealizedPnL?.closeConversionRate ?? position.closeConversionRate,
+    1
+  )
+
+  if (units > 0 && closeRate > 0 && closeConversionRate > 0) {
+    return {
+      value: round(units * closeRate * closeConversionRate),
+      source: 'units_closeRate_closeConversionRate',
     }
   }
 
@@ -404,6 +416,33 @@ function getPositionMirrorId(position: RawPosition): number | null {
 function getMirrorSymbol(mirror: RawMirror) {
   const mirrorId = getMirrorId(mirror)
   return mirror.parentUsername ?? `MIRROR-${mirrorId}`
+}
+
+function getMirrorTypeLabel(mirror: RawMirror): string | null {
+  const rawType = [mirror.mirrorType, mirror.copyType, mirror.portfolioType, mirror.type].find(
+    (value) => value !== null && value !== undefined && String(value).trim() !== ''
+  )
+
+  if (rawType === undefined) {
+    return null
+  }
+
+  const normalized = String(rawType)
+    .trim()
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+
+  const compact = normalized.replace(/\s+/g, '').toLowerCase()
+  const knownLabels: Record<string, string> = {
+    smartportfolio: 'Smart Portfolio',
+    copyportfolio: 'Copy Portfolio',
+    copiedportfolio: 'Copied Portfolio',
+    copytrader: 'Copy Trader',
+    copiedtrader: 'Copied Trader',
+  }
+
+  return knownLabels[compact] ?? normalized
 }
 
 function isDirectAccountingPosition(position: RawPosition) {
@@ -602,9 +641,23 @@ function inspectMirror(
   const nestedPositions = [
     ...(Array.isArray(mirror.positions) ? mirror.positions : []),
     ...(mirrorLinkedPositions.get(mirrorId) ?? []),
-  ]
+  ].filter((position, index, positions) => {
+    const positionId = toNumber(position.positionId ?? position.positionID, Number.NaN)
+
+    return (
+      !Number.isFinite(positionId) ||
+      positionId <= 0 ||
+      positions.findIndex(
+        (candidate) =>
+          toNumber(candidate.positionId ?? candidate.positionID, Number.NaN) === positionId
+      ) === index
+    )
+  })
   const nestedActualValue = round(
-    nestedPositions.reduce((total, position) => total + getPositionActualValueUsd(position), 0)
+    nestedPositions.reduce((total, position) => {
+      const actualValue = resolvePositionActualValueUsd(position)
+      return total + (actualValue.safelyKnown ? actualValue.value : 0)
+    }, 0)
   )
   const nestedNotionalExposure = round(
     nestedPositions.reduce((total, position) => total + getPositionNotionalExposureUsd(position), 0)
@@ -618,6 +671,7 @@ function inspectMirror(
     'marketValue',
     'portfolioValue',
   ])
+  const availableAmount = toNumber(mirror.availableAmount, Number.NaN)
 
   return {
     mirror,
@@ -626,6 +680,8 @@ function inspectMirror(
     explicitValue: explicitValue.value !== null ? explicitValue : null,
     explicitPnl: resolveMirrorExplicitPnlUsd(mirror),
     invested: resolveMirrorInvestedUsd(mirror),
+    availableAmount:
+      Number.isFinite(availableAmount) && availableAmount >= 0 ? round(availableAmount) : null,
     nestedPositions,
     nestedActualValue,
     nestedNotionalExposure,
@@ -674,6 +730,7 @@ function buildMirrorValueResolution(args: {
     pnlDefaulted: pnl.defaulted,
     investedValue: args.inspection.invested.value,
     investedSource: args.inspection.invested.source,
+    availableAmountValue: args.inspection.availableAmount,
     valueMinusInvested,
     nestedActualValue: args.inspection.nestedActualValue,
     nestedNotionalExposure: args.inspection.nestedNotionalExposure,
@@ -748,6 +805,19 @@ function resolveMirrorValues(args: {
       continue
     }
 
+    if (inspection.nestedActualValue > 0) {
+      resolved.set(
+        inspection,
+        buildMirrorValueResolution({
+          inspection,
+          value: inspection.nestedActualValue,
+          source: 'nested_actual_values',
+          residualValue: null,
+        })
+      )
+      continue
+    }
+
     if (inspection.explicitPnl && inspection.invested.value !== null) {
       resolved.set(
         inspection,
@@ -755,6 +825,19 @@ function resolveMirrorValues(args: {
           inspection,
           value: round(inspection.invested.value + inspection.explicitPnl.value),
           source: `${inspection.invested.source}_plus_${inspection.explicitPnl.source}`,
+          residualValue: null,
+        })
+      )
+      continue
+    }
+
+    if (inspection.availableAmount !== null) {
+      resolved.set(
+        inspection,
+        buildMirrorValueResolution({
+          inspection,
+          value: inspection.availableAmount,
+          source: 'availableAmount_fallback',
           residualValue: null,
         })
       )
@@ -766,15 +849,6 @@ function resolveMirrorValues(args: {
 
     if (existing) {
       return existing
-    }
-
-    if (inspection.nestedActualValue > 0) {
-      return buildMirrorValueResolution({
-        inspection,
-        value: inspection.nestedActualValue,
-        source: 'nested_actual_values',
-        residualValue: null,
-      })
     }
 
     return buildMirrorValueResolution({
@@ -840,6 +914,7 @@ function normalizeMirrors(
 ): NormalizedHolding[] {
   return mirrorValueResolutions.map((mirrorValue) => {
     const mirror = mirrorValue.mirror
+    const mirrorTypeLabel = getMirrorTypeLabel(mirror)
     const rawMarketValue = round(mirrorValue.value)
     const rawNotionalExposure = mirrorValue.nestedNotionalExposure
     const marketValue = convertBrokerAmount(rawMarketValue, fxContext)
@@ -852,8 +927,10 @@ function normalizeMirrors(
     return {
       symbol: mirrorValue.symbol,
       instrument_name: mirror.parentUsername
-        ? `Smart Portfolio: ${mirror.parentUsername}`
-        : `Mirror ${mirrorValue.mirrorId}`,
+        ? `${mirrorTypeLabel ?? 'Mirror'}: ${mirror.parentUsername}`
+        : mirrorTypeLabel
+          ? `${mirrorTypeLabel} ${mirrorValue.mirrorId}`
+          : `Mirror ${mirrorValue.mirrorId}`,
       quantity: null,
       average_open: toNumber(mirror.initialInvestment) || null,
       current_price: null,
@@ -1063,17 +1140,26 @@ export function normalizeEtoroData(args: {
       : smartPortfolioInvestedSources.length === 1
         ? smartPortfolioInvestedSources[0]
         : 'mixed'
-  const smartPortfolioMirrors = mirrorValueResolutions.map((mirrorValue) => ({
+  const mirrorDiagnostics = mirrorValueResolutions.map((mirrorValue) => ({
     symbol: mirrorValue.symbol,
+    mirrorId: mirrorValue.mirrorId || null,
     resolvedValueUsd: mirrorValue.value,
     resolvedValueSource: mirrorValue.source,
+    nestedActualValueUsd: mirrorValue.nestedActualValue,
+    nestedNotionalExposureUsd: mirrorValue.nestedNotionalExposure,
+    nestedPositionCount: mirrorValue.nestedPositionCount,
     resolvedPnlUsd: mirrorValue.pnlValue,
     resolvedPnlSource: mirrorValue.pnlSource,
     pnlDefaulted: mirrorValue.pnlDefaulted,
     investedUsd: mirrorValue.investedValue,
     investedSource: mirrorValue.investedSource,
     valueMinusInvestedUsd: mirrorValue.valueMinusInvested,
+    availableAmountUsd: mirrorValue.availableAmountValue,
+    rawParentUsername: mirrorValue.mirror.parentUsername ?? null,
   }))
+  // Preserve the original diagnostics key for consumers created before mirror
+  // valuation was generalized beyond Smart Portfolios.
+  const smartPortfolioMirrors = mirrorDiagnostics
   const nestedMirrorPositionCount = mirrorValueResolutions.reduce(
     (total, mirrorValue) => total + mirrorValue.nestedPositionCount,
     0
@@ -1092,7 +1178,8 @@ export function normalizeEtoroData(args: {
     brokerReportedTotal.value ?? reconstructedTotalAccountValue
   )
   const hasUnsafeMirrorFallback = mirrorValueResolutions.some(
-    (mirrorValue) => mirrorValue.source === 'unresolved'
+    (mirrorValue) =>
+      mirrorValue.source === 'unresolved' || mirrorValue.source === 'availableAmount_fallback'
   )
   const valuationSource =
     brokerReportedTotal.value !== null
@@ -1170,6 +1257,7 @@ export function normalizeEtoroData(args: {
         smartPortfolioInvestedSource,
         smartPortfolioInvestedSources,
         smartPortfolioValueMinusInvestedUsd,
+        mirrorDiagnostics,
         smartPortfolioMirrors,
         smartPortfolioLookthrough,
         reconstructedTotalUsd,

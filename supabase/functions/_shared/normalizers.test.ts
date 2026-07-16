@@ -139,7 +139,7 @@ describe('eToro normalizer', () => {
     expect(normalized.totalAccountValue).toBe(820)
     expect(normalized.holdings[0]).toMatchObject({
       symbol: 'QuantumComputing',
-      instrument_name: 'Smart Portfolio: QuantumComputing',
+      instrument_name: 'Mirror: QuantumComputing',
       market_value: 720,
       pnl: 220,
       allocation_pct: 0.878049,
@@ -231,6 +231,117 @@ describe('eToro normalizer', () => {
       smartPortfolioPnlSource: 'explicit_pnl',
       smartPortfolioInvestedUsd: 500,
       smartPortfolioInvestedSource: 'initialInvestment',
+    })
+  })
+
+  it('prefers nested Smart Portfolio actual value over available cash', () => {
+    const normalized = normalizeEtoroData({
+      pnl: {
+        clientPortfolio: {
+          mirrors: [
+            {
+              mirrorId: 42,
+              parentUsername: 'QuantumComputing',
+              mirrorType: 'SmartPortfolio',
+              availableAmount: 1.05,
+              initialInvestment: 500,
+              positions: [
+                { amount: 250, pnL: 2.79 },
+                { amount: 250, pnL: 0 },
+              ],
+            },
+          ],
+        },
+      },
+      fxContext: {
+        brokerCurrency: 'USD',
+        fundCurrency: 'USD',
+        rate: 1,
+        source: 'same_currency',
+        referenceDate: null,
+      },
+    })
+
+    expect(normalized.totalAccountValue).toBe(502.79)
+    expect(normalized.holdings[0]).toMatchObject({
+      instrument_name: 'Smart Portfolio: QuantumComputing',
+      market_value: 502.79,
+    })
+    expect(normalized.rawJson.valuation).toMatchObject({
+      mirrorDiagnostics: [
+        expect.objectContaining({
+          symbol: 'QuantumComputing',
+          mirrorId: 42,
+          resolvedValueUsd: 502.79,
+          resolvedValueSource: 'nested_actual_values',
+          nestedActualValueUsd: 502.79,
+          nestedPositionCount: 2,
+          investedUsd: 500,
+          availableAmountUsd: 1.05,
+          rawParentUsername: 'QuantumComputing',
+        }),
+      ],
+    })
+  })
+
+  it('values a copied trader from nested leveraged equity before invested plus PnL', () => {
+    const normalized = normalizeEtoroData({
+      pnl: {
+        clientPortfolio: {
+          mirrors: [
+            {
+              mirrorId: 77,
+              parentUsername: 'CopiedTrader',
+              type: 'CopyTrader',
+              initialInvestment: 200,
+              pnl: 10,
+              positions: [
+                {
+                  unrealizedPnL: {
+                    marginInAccountCurrency: 90,
+                    pnL: 5,
+                    exposureInAccountCurrency: 150,
+                  },
+                },
+                {
+                  unrealizedPnL: {
+                    marginInAccountCurrency: 95,
+                    pnL: -5,
+                    exposureInAccountCurrency: 150,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      },
+      fxContext: {
+        brokerCurrency: 'USD',
+        fundCurrency: 'USD',
+        rate: 1,
+        source: 'same_currency',
+        referenceDate: null,
+      },
+    })
+
+    expect(normalized.totalAccountValue).toBe(185)
+    expect(normalized.holdings[0]).toMatchObject({
+      instrument_name: 'Copy Trader: CopiedTrader',
+      market_value: 185,
+      notional_exposure: 300,
+    })
+    expect(normalized.holdings[0]?.market_value).not.toBe(210)
+    expect(normalized.rawJson.valuation).toMatchObject({
+      mirrorDiagnostics: [
+        expect.objectContaining({
+          resolvedValueUsd: 185,
+          resolvedValueSource: 'nested_actual_values',
+          nestedActualValueUsd: 185,
+          nestedNotionalExposureUsd: 300,
+          resolvedPnlUsd: 10,
+          valueMinusInvestedUsd: -15,
+        }),
+      ],
     })
   })
 
@@ -397,6 +508,46 @@ describe('eToro normalizer', () => {
       directNotionalExposureUsd: 550,
       reconstructedTotalUsd: 110,
       finalTotalAccountValue: 110,
+    })
+  })
+
+  it('prefers position margin for actual value and derives notional from units as fallback', () => {
+    const normalized = normalizeEtoroData({
+      pnl: {
+        clientPortfolio: {
+          positions: [
+            {
+              instrumentID: 1001,
+              amount: 200,
+              units: 3,
+              closeRate: 100,
+              closeConversionRate: 1,
+              unrealizedPnL: {
+                marginInAccountCurrency: 80,
+                pnL: 5,
+              },
+            },
+          ],
+        },
+      },
+      fxContext: {
+        brokerCurrency: 'USD',
+        fundCurrency: 'USD',
+        rate: 1,
+        source: 'same_currency',
+        referenceDate: null,
+      },
+    })
+
+    expect(normalized.totalAccountValue).toBe(85)
+    expect(normalized.holdings[0]).toMatchObject({
+      market_value: 85,
+      notional_exposure: 300,
+      leverage_multiple: 3.529412,
+    })
+    expect(normalized.rawJson.valuation).toMatchObject({
+      directActualValueUsd: 85,
+      directNotionalExposureUsd: 300,
     })
   })
 
@@ -899,7 +1050,7 @@ describe('eToro normalizer', () => {
     )
 
     expect(quantumHolding).toMatchObject({
-      instrument_name: 'Smart Portfolio: QuantumComputing',
+      instrument_name: 'Mirror: QuantumComputing',
       market_value: 375,
       notional_exposure: 377.0925,
     })
